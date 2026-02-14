@@ -12,129 +12,133 @@ export class ExploreService {
     ) { }
 
     private readonly hubConfigs = {
-        'eligibility': {
-            title: 'Loan Eligibility & Finance',
-            badge: 'ELIGIBILITY',
-            description: 'Navigate the complexities of loan approvals, credit scores, and financial planning.',
-            advice: 'Get expert guidance on loan eligibility, documentation, and approval strategies from those who\'ve been through it.',
-            featuredPost: {
-                question: 'What challenges are you facing with loan eligibility?',
-                description: 'Our mentor team includes bank relationship managers and students who successfully secured education loans. Ask us about credit scores, collateral requirements, or improving your eligibility.',
-                advice: 'Get expert guidance on loan eligibility, documentation, and approval strategies from those who\'ve been through it.'
-            },
+        'loans': {
+            title: 'Loans & Finance',
+            badge: 'LOANS',
+            description: 'Interest rates, banks, eligibility, and EMI planning.',
+            advice: 'Get expert guidance on loan eligibility, documentation, and approval strategies.',
             categories: ['loan', 'finance', 'eligibility'],
             icon: 'payments'
         },
         'universities': {
-            title: 'University Selection & Rankings',
+            title: 'Universities',
             badge: 'UNIVERSITIES',
-            description: 'Explore top global universities, program quality, and campus life insights.',
-            advice: 'Connect with alumni from top universities worldwide for insider perspectives on university life and academics.',
-            featuredPost: {
-                question: 'Need help choosing the right university?',
-                description: 'Our mentors are alumni from top global universities. Ask about rankings, program quality, campus life, ROI, or specific university comparisons.',
-                advice: 'Connect with alumni from top universities worldwide for insider perspectives on university life and academics.'
-            },
+            description: 'Country filters, rank insights, and university discussions.',
+            advice: 'Connect with alumni from top universities worldwide for insider perspectives.',
             categories: ['university', 'admission', 'ranking'],
             icon: 'school'
         },
         'courses': {
-            title: 'Course & Program Guidance',
+            title: 'Courses',
             badge: 'COURSES',
-            description: 'Find the right program for your career goals, from STEM to Business.',
-            advice: 'Our mentors have pursued diverse programs. Get advice on course selection aligned with your career goals.',
-            featuredPost: {
-                question: 'Confused about which program to choose?',
-                description: 'Ask mentors about MS vs MBA, specialized programs, curriculum details, career outcomes, or switching fields.',
-                advice: 'Our mentors have pursued diverse programs - from STEM to Business. Get advice on course selection aligned with your career goals.'
-            },
+            description: 'MS, MBA, PhD, and specialized international programs.',
+            advice: 'Get advice on course selection aligned with your career goals.',
             categories: ['course', 'curriculum', 'career'],
             icon: 'menu_book'
         },
+        'stories': {
+            title: 'Success Stories',
+            badge: 'STORIES',
+            description: 'Real student journeys, mistakes, and triumph reports.',
+            advice: 'Read first-hand accounts of students who successfully moved abroad.',
+            categories: ['story', 'success'],
+            icon: 'lightbulb',
+            isSpecialRoute: true,
+            route: 'Success Stories'
+        },
+        'mentors': {
+            title: 'Alumni & Mentors',
+            badge: 'MENTORS',
+            description: 'Verified advisors and successful student mentors.',
+            advice: 'Book sessions with mentors who have actually walked the path.',
+            categories: ['mentor', 'alumni'],
+            icon: 'groups',
+            isSpecialRoute: true,
+            route: 'Alumni & Mentors'
+        },
         'scholarships': {
-            title: 'Scholarships & Grants',
+            title: 'Scholarships',
             badge: 'SCHOLARSHIPS',
-            description: 'Discover funding opportunities and learn how to write winning applications.',
-            advice: 'Learn from scholarship recipients about deadlines, application strategies, and lesser-known funding sources.',
-            featuredPost: {
-                question: 'Looking for scholarship opportunities?',
-                description: 'Mentors who won scholarships share tips on finding opportunities, writing winning applications, and maximizing financial aid.',
-                advice: 'Learn from scholarship recipients about deadlines, application strategies, and lesser-known funding sources.'
-            },
+            description: 'Deadlines, alerts, and matching tailored to your profile.',
+            advice: 'Learn from scholarship recipients about application strategies.',
             categories: ['scholarship', 'funding', 'grant'],
             icon: 'card_membership'
         },
-        'visa': {
-            title: 'Visa & Immigration',
-            badge: 'VISA',
-            description: 'Step-by-step guidance on visa interviews, documentation, and processes.',
-            advice: 'Get insights on visa success stories, rejection reasons to avoid, and country-specific visa nuances.',
-            featuredPost: {
-                question: 'Visa application got you stressed?',
-                description: 'Mentors share their visa interview experiences, document preparation tips, and how to handle common visa officer questions.',
-                advice: 'Get insights on visa success stories, rejection reasons to avoid, and country-specific visa nuances.'
-            },
-            categories: ['visa', 'immigration', 'interview'],
-            icon: 'demography'
-        },
         'accommodation': {
-            title: 'Housing & Accommodation',
-            badge: 'ACCOMMODATION',
-            description: 'Find safe, affordable housing and learn about living abroad.',
-            advice: 'Get practical advice on housing markets, safe neighborhoods, and avoiding common rental pitfalls.',
-            featuredPost: {
-                question: 'Worried about finding housing abroad?',
-                description: 'Current students and alumni share tips on finding accommodation, navigating lease agreements, roommate searches, and budget-friendly living.',
-                advice: 'Get practical advice on housing markets, safe neighborhoods, and avoiding common rental pitfalls in different countries.'
-            },
+            title: 'Accommodation',
+            badge: 'HOUSING',
+            description: 'Find housing, roommates, and local living tips.',
+            advice: 'Get practical advice on housing markets and safe neighborhoods.',
             categories: ['accommodation', 'housing', 'living'],
             icon: 'home'
         },
-        'gre': {
-            title: 'Test Prep (GRE/IELTS/TOEFL)',
+        'testprep': {
+            title: 'Test Preparation',
             badge: 'TEST PREP',
-            description: 'Master your exams with proven strategies and study resources.',
-            advice: 'Learn from students who scored 320+ on GRE, 8+ on IELTS, and 110+ on TOEFL about effective preparation.',
-            featuredPost: {
-                question: 'Need test prep strategies and resources?',
-                description: 'High scorers share study plans, resources, test-taking strategies, and tips to improve your scores.',
-                advice: 'Learn from students who scored 320+ on GRE, 8+ on IELTS, and 110+ on TOEFL about effective preparation methods.'
-            },
+            description: 'GRE, IELTS, TOEFL, GMAT, and SAT strategies.',
+            advice: 'Learn from students who scored in the top percentiles.',
             categories: ['testprep', 'gre', 'ielts', 'toefl'],
             icon: 'edit_note'
         },
-        'jobs': {
-            title: 'Part-time Jobs & Careers',
-            badge: 'JOBS',
-            description: 'Kickstart your career with part-time work and internship guidance.',
-            advice: 'Learn about legal work hours, resume tips for local markets, and networking strategies for your career.',
-            featuredPost: {
-                question: 'Looking for work opportunities?',
-                description: 'Get advice on finding part-time jobs while studying, internships, and post-study work opportunities in different countries.',
-                advice: 'Learn about legal work hours, resume tips for local markets, and networking strategies for your career.'
-            },
-            categories: ['jobs', 'careers', 'internships'],
-            icon: 'work'
+        'events': {
+            title: 'Events & AMAs',
+            badge: 'EVENTS',
+            description: 'Live sessions with banks, alumni, and industry experts.',
+            advice: 'Stay updated with upcoming webinars and expert sessions.',
+            categories: ['event', 'ama'],
+            icon: 'event',
+            isSpecialRoute: true,
+            route: 'Events & AMAs'
+        },
+        'visa': {
+            title: 'Visa Support',
+            badge: 'VISA',
+            description: 'Application guides, interview tips, and checklists.',
+            advice: 'Get insights on visa success stories and interview prep.',
+            categories: ['visa', 'immigration', 'interview'],
+            icon: 'flight'
+        },
+        'aitools': {
+            title: 'AI Tools',
+            badge: 'AI FEATURES',
+            description: 'AI SOP writer, admit predictor, and loan advisors.',
+            advice: 'Use our cutting-edge AI tools to streamline your journey.',
+            categories: ['ai', 'tools'],
+            icon: 'smart_toy'
+        },
+        'resources': {
+            title: 'Resources',
+            badge: 'RESOURCES',
+            description: 'Download free guides, checklists, and templates.',
+            advice: 'Access high-quality resources to help with your application.',
+            categories: ['resource', 'guide'],
+            icon: 'folder_open',
+            isSpecialRoute: true,
+            route: 'Resources'
         },
         'general': {
             title: 'General Discussion',
             badge: 'GENERAL',
             description: 'Connect with the community on any topic related to your study abroad journey.',
             advice: 'Connect with the community on diverse topics and share your unique experiences.',
-            featuredPost: {
-                question: 'Have a general query?',
-                description: 'Discuss anything related to study abroad, student life, travel tips, or topics not covered in other categories.',
-                advice: 'Connect with the community on diverse topics and share your unique experiences.'
-            },
             categories: ['general', 'discussion'],
-            icon: 'forum'
+            icon: 'forum',
+            isHidden: true
         }
     };
 
+    private _normalizeTopic(topic: string): string {
+        let normalized = topic.toLowerCase();
+        if (normalized === 'loan' || normalized === 'loans' || normalized === 'eligibility') return 'loans';
+        if (normalized === 'admission' || normalized === 'admissions' || normalized === 'university') return 'universities';
+        if (normalized === 'course') return 'courses';
+        if (normalized === 'gre' || normalized === 'ielts' || normalized === 'toefl') return 'testprep';
+        return normalized;
+    }
+
     async getHubData(topic: string) {
-        // Handle aliases
-        let targetTopic = topic;
-        if (topic === 'loan') targetTopic = 'eligibility';
+        // Handle aliases and normalization
+        const targetTopic = this._normalizeTopic(topic);
 
         const config = this.hubConfigs[targetTopic];
         if (!config) {
@@ -154,14 +158,14 @@ export class ExploreService {
         const [activeMentorsCount, totalPostsCount] = await Promise.all([
             this.prisma.mentor.count({
                 where: {
-                    category: { contains: targetTopic, mode: 'insensitive' },
+                    category: { equals: targetTopic },
                     isActive: true,
                     isApproved: true
                 }
             }),
             this.prisma.forumPost.count({
                 where: {
-                    category: { contains: targetTopic, mode: 'insensitive' }
+                    category: { equals: targetTopic }
                 }
             })
         ]);
@@ -183,7 +187,7 @@ export class ExploreService {
                         members: totalPostsCount * 3 + activeMentorsCount // Simulated member count
                     }
                 },
-                featuredMentorPost: config.featuredPost,
+                featuredMentorPost: (config as any).featuredPost,
                 mentors: mentors.data,
                 events: events.data,
                 resources: resources.data,
@@ -196,19 +200,17 @@ export class ExploreService {
     async getAllHubs() {
         return {
             success: true,
-            data: Object.keys(this.hubConfigs).map(key => ({
-                id: key,
-                ...this.hubConfigs[key]
-            }))
+            data: Object.keys(this.hubConfigs)
+                .filter(key => !this.hubConfigs[key].isHidden)
+                .map(key => ({
+                    id: key,
+                    ...this.hubConfigs[key]
+                }))
         };
     }
 
     async getHubPosts(topic: string, sort?: string, userId?: string) {
-        let category = topic;
-        if (topic === 'loan') category = 'eligibility';
-
-        // Ensure category is valid or at least one of our hubs? 
-        // For now, we trust the topic or map it if needed.
+        const category = this._normalizeTopic(topic);
 
         return this.communityService.getForumPosts({
             category: category,
@@ -218,8 +220,7 @@ export class ExploreService {
     }
 
     async createHubPost(userId: string, topic: string, data: any) {
-        let category = topic;
-        if (topic === 'loan') category = 'eligibility';
+        const category = this._normalizeTopic(topic);
 
         // Override category in data with the hub topic
         const postData = {

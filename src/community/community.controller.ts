@@ -555,7 +555,37 @@ export class CommunityController {
 
     // ==================== FORUM ENDPOINTS ====================
 
-    // ==================== FORUM ENDPOINTS ====================
+    @Get('forum')
+    async getAllForumPosts(
+        @Query('category') category?: string,
+        @Query('tag') tag?: string,
+        @Query('limit') limit?: string,
+        @Query('offset') offset?: string,
+        @Query('sort') sort?: string,
+        @Request() req?,
+    ) {
+        let userId: string | undefined;
+        try {
+            const authHeader = req?.headers?.authorization;
+            if (authHeader && authHeader.startsWith('Bearer ')) {
+                const token = authHeader.split(' ')[1];
+                const decoded = this.jwtService.decode(token) as any;
+                if (decoded && decoded.id) {
+                    userId = decoded.id;
+                }
+            }
+        } catch (e) {
+            // ignore token errors
+        }
+
+        return this.communityService.getForumPosts({
+            category,
+            tag,
+            limit: limit ? parseInt(limit, 10) : 10,
+            offset: offset ? parseInt(offset, 10) : 0,
+            sort,
+        }, userId);
+    }
 
     @Get('forum/:id')
     async getForumPostById(@Param('id') id: string, @Request() req) {
@@ -575,13 +605,24 @@ export class CommunityController {
         return this.communityService.getForumPostById(id, userId);
     }
 
-    @Post('forum/:id/comment')
+    @Post('forum')
+    @UseGuards(UserGuard)
+    async createForumPost(
+        @Request() req,
+        @Body() body: { title: string; content: string; category: string; tags?: string[] },
+    ) {
+        return this.communityService.createForumPost(req.user.id, body);
+    }
+
+    @Post('forum/:id/comments')
     @UseGuards(UserGuard)
     async createForumComment(
         @Request() req,
         @Param('id') id: string,
         @Body() body: { content: string; parentId?: string },
     ) {
+        console.log(`[CommunityController] createForumComment for post ${id} by user ${req.user.id}`);
+        console.log(`[CommunityController] body:`, body);
         return this.communityService.createForumComment(
             req.user.id,
             id,
