@@ -694,7 +694,7 @@ export class ApplicationService {
               users.forEach((user: any) => {
                 staffMap.set(user.id, {
                   counselorName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'VidhyaLoan Counselor',
-                  counselorPhone: user.phoneNumber || '+91 9240209000',
+                  counselorPhone: user.phoneNumber || '+91 8143797779',
                   counselorEmail: user.email || 'vidyaloans7@gmail.com'
                 });
               });

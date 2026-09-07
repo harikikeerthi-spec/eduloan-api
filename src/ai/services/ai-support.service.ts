@@ -17,7 +17,7 @@ Key Information about VidhyaLoan:
 - Covered Destinations: USA, UK, Canada, Germany, Australia, Ireland, Europe, and India.
 - Services: 100% free loan assistance, rapid sanction letter for visa filing, and expert counselors.
 - Tools in App: Eligibility Checker, EMI Calculator, University Shortlisting & Comparator, SOP Reviewer, Admit Predictor, and AI Visa Interview Simulator.
-- Official Support Email: support@vidyaloans.in | Support Phone: +91 92402 09000.
+- Official Support Email: support@vidyaloans.in | Support Phone: +91 8143797779.
 
 Tone & Guidelines:
 - Be encouraging, polite, concise, and structured (use clean bullet points where appropriate).
@@ -60,7 +60,7 @@ Tone & Guidelines:
       return "VidhyaLoan provides non-collateral (unsecured) loans up to ₹75 Lakhs for premier global universities. For higher amounts up to ₹1.5+ Crores, secured loans backed by residential or commercial property or fixed deposits are available at lower rates.";
     }
     if (lower.includes('contact') || lower.includes('support') || lower.includes('number') || lower.includes('phone') || lower.includes('call')) {
-      return "You can contact VidhyaLoan official support anytime via email at support@vidyaloans.in or call our team at +91 92402 09000.";
+      return "You can contact VidhyaLoan official support anytime via email at support@vidyaloans.in or call our team at +91 8143797779.";
     }
     return "Hello! I am your VidhyaLoan AI Support Assistant. I can help you with education loan eligibility, required documents, interest rates, university comparison, and application guidance. How can I assist you today?";
   }

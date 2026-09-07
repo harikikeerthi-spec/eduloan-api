@@ -1212,10 +1212,11 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
   // ==================== SMART GROUP CHANNELS & REAL CHAT METHODS ====================
 
   private readonly initialGroupsSeed = [];
-
-  // Shared global in-memory persistence for real-time Smart Groups & Chat Messages
   private static inMemoryGroups: Map<string, any> = new Map();
   private static inMemoryGroupMessages: Map<string, any[]> = new Map();
+  private static cachedSmartGroups: any[] | null = null;
+  private static lastGroupsFetch = 0;
+  private static lastGroupMsgFetch: Map<string, number> = new Map();
 
   private isStaticGroup(g: any): boolean {
     if (!g) return false;
@@ -1233,6 +1234,11 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
   }
 
   async getSmartGroups() {
+    const now = Date.now();
+    if (CommunityService.cachedSmartGroups && (now - CommunityService.lastGroupsFetch < 12000)) {
+      return { success: true, data: CommunityService.cachedSmartGroups };
+    }
+
     try {
       const { data: dbGroups, error } = await this.db
         .from('CommunityGroup')
@@ -1254,6 +1260,9 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
       const allGroups = Array.from(CommunityService.inMemoryGroups.values())
         .filter((g: any) => !this.isStaticGroup(g));
       allGroups.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+      
+      CommunityService.cachedSmartGroups = allGroups;
+      CommunityService.lastGroupsFetch = now;
       return { success: true, data: allGroups };
     } catch (e) {
       const allGroups = Array.from(CommunityService.inMemoryGroups.values())
@@ -1263,6 +1272,9 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
   }
 
   async createSmartGroup(groupData: any) {
+    CommunityService.cachedSmartGroups = null;
+    CommunityService.lastGroupsFetch = 0;
+
     const id = groupData.id || `group_${Date.now()}`;
     const newGroup = {
       id,
@@ -1273,50 +1285,59 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
       iconName: groupData.iconName || 'school_rounded',
       colorHex: groupData.colorHex || '#311B92',
       badge: groupData.badge || 'Custom Group',
-      lastMsg: groupData.lastMsg || 'Group channel created just now!',
-      adminEmail: groupData.adminEmail || '',
-      adminName: groupData.adminName || '',
+      lastMsg: groupData.lastMsg || 'Group channel created',
+      createdBy: groupData.adminEmail || groupData.createdBy || '',
+      adminEmail: groupData.adminEmail || groupData.createdBy || '',
+      adminName: groupData.adminName || 'Admin',
       createdAt: new Date().toISOString(),
     };
 
     CommunityService.inMemoryGroups.set(id, newGroup);
 
-    const dbGroup = {
-      id,
-      title: newGroup.title,
-      subtitle: newGroup.subtitle,
-      members: newGroup.members,
-      online: newGroup.online,
-      iconName: newGroup.iconName,
-      colorHex: newGroup.colorHex,
-      badge: newGroup.badge,
-      lastMsg: newGroup.lastMsg,
-      createdBy: newGroup.adminEmail || null,
-      createdAt: newGroup.createdAt,
-    };
-
     try {
       const { data, error } = await this.db
         .from('CommunityGroup')
-        .insert(dbGroup)
+        .insert([
+          {
+            id,
+            title: newGroup.title,
+            subtitle: newGroup.subtitle,
+            members: newGroup.members,
+            online: newGroup.online,
+            iconName: newGroup.iconName,
+            colorHex: newGroup.colorHex,
+            badge: newGroup.badge,
+            lastMsg: newGroup.lastMsg,
+            createdBy: newGroup.createdBy,
+            createdAt: newGroup.createdAt,
+          },
+        ])
         .select()
         .single();
+
       if (data) {
         CommunityService.inMemoryGroups.set(id, {
           ...data,
           adminEmail: data.createdBy || '',
-          adminName: newGroup.adminName,
+          adminName: 'Admin',
         });
       }
     } catch (e) {
-      console.warn('Fallback createSmartGroup in-memory save:', e);
+      console.warn('[CommunityService] Error saving group to DB, saved to inMemory:', e);
     }
 
     return { success: true, data: CommunityService.inMemoryGroups.get(id) || newGroup };
   }
 
   async getGroupMessages(groupId: string) {
+    const now = Date.now();
+    const lastFetch = CommunityService.lastGroupMsgFetch.get(groupId) || 0;
     const memMsgs = CommunityService.inMemoryGroupMessages.get(groupId) || [];
+
+    if (memMsgs.length > 0 && (now - lastFetch < 3500)) {
+      return { success: true, data: memMsgs };
+    }
+
     try {
       const { data: dbMsgs, error } = await this.db
         .from('CommunityGroupMessage')
@@ -1328,16 +1349,15 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
       if (dbMsgs && dbMsgs.length > 0) {
         dbMsgs.forEach((m: any) => {
           msgMap.set(m.id || `${m.sender}_${m.text}_${m.time}`, m);
-          if (!memMsgs.some((x: any) => x.id === m.id)) {
-            memMsgs.push(m);
-          }
         });
-        CommunityService.inMemoryGroupMessages.set(groupId, memMsgs);
       }
       memMsgs.forEach((m: any) => msgMap.set(m.id || `${m.sender}_${m.text}_${m.time}`, m));
 
       const merged = Array.from(msgMap.values());
       merged.sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime());
+      
+      CommunityService.inMemoryGroupMessages.set(groupId, merged);
+      CommunityService.lastGroupMsgFetch.set(groupId, now);
       return { success: true, data: merged };
     } catch (e) {
       console.warn('[CommunityService] Error fetching messages from DB, using cache:', e);
