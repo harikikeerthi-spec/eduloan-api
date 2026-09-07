@@ -1245,11 +1245,39 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
         .select('*')
         .order('createdAt', { ascending: false });
 
+      // Calculate accurate approved members from join requests table
+      const approvedCounts = new Map<string, number>();
+      try {
+        const { data: approvedReqs } = await this.db
+          .from('CommunityGroupJoinRequest')
+          .select('groupId, applicantEmail')
+          .eq('status', 'APPROVED');
+
+        if (approvedReqs && approvedReqs.length > 0) {
+          const uniqueByGroup = new Map<string, Set<string>>();
+          approvedReqs.forEach((r: any) => {
+            if (r.groupId) {
+              if (!uniqueByGroup.has(r.groupId)) uniqueByGroup.set(r.groupId, new Set());
+              if (r.applicantEmail) uniqueByGroup.get(r.groupId)!.add(r.applicantEmail.toLowerCase().trim());
+            }
+          });
+          uniqueByGroup.forEach((set, gId) => {
+            approvedCounts.set(gId, set.size);
+          });
+        }
+      } catch (_) {}
+
       if (dbGroups && dbGroups.length > 0) {
         dbGroups.forEach((g: any) => {
           if (!this.isStaticGroup(g)) {
+            const approved = approvedCounts.get(g.id) || 0;
+            const totalMembers = Math.max(1, Math.max(g.members || 1, 1 + approved));
+            const safeOnline = Math.max(1, Math.min(totalMembers, g.online || 1));
+
             CommunityService.inMemoryGroups.set(g.id, {
               ...g,
+              members: totalMembers,
+              online: safeOnline,
               adminEmail: g.createdBy || '',
               adminName: '',
             });
@@ -1493,9 +1521,52 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
         .update({ members: newCount })
         .eq('id', groupId);
 
+      if (CommunityService.inMemoryGroups.has(groupId)) {
+        const mem = CommunityService.inMemoryGroups.get(groupId);
+        CommunityService.inMemoryGroups.set(groupId, {
+          ...mem,
+          members: newCount,
+        });
+      }
+
+      CommunityService.cachedSmartGroups = null;
+      CommunityService.lastGroupsFetch = 0;
+
       return { success: true, message: 'Joined group successfully', members: newCount };
     } catch (e) {
       return { success: true, message: 'Joined group' };
+    }
+  }
+
+  async leaveGroup(groupId: string, userId?: string) {
+    try {
+      const { data: group } = await this.db
+        .from('CommunityGroup')
+        .select('members')
+        .eq('id', groupId)
+        .maybeSingle();
+
+      const newCount = Math.max(1, (group?.members || 2) - 1);
+      await this.db
+        .from('CommunityGroup')
+        .update({ members: newCount })
+        .eq('id', groupId);
+
+      if (CommunityService.inMemoryGroups.has(groupId)) {
+        const mem = CommunityService.inMemoryGroups.get(groupId);
+        CommunityService.inMemoryGroups.set(groupId, {
+          ...mem,
+          members: newCount,
+          online: Math.max(1, Math.min(newCount, mem.online || 1)),
+        });
+      }
+
+      CommunityService.cachedSmartGroups = null;
+      CommunityService.lastGroupsFetch = 0;
+
+      return { success: true, message: 'Left group successfully', members: newCount };
+    } catch (e) {
+      return { success: true, message: 'Left group' };
     }
   }
 
@@ -1558,6 +1629,17 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
         .from('CommunityGroup')
         .update({ members: newCount })
         .eq('id', groupId);
+
+      if (CommunityService.inMemoryGroups.has(groupId)) {
+        const mem = CommunityService.inMemoryGroups.get(groupId);
+        CommunityService.inMemoryGroups.set(groupId, {
+          ...mem,
+          members: newCount,
+        });
+      }
+
+      CommunityService.cachedSmartGroups = null;
+      CommunityService.lastGroupsFetch = 0;
 
       return { success: true, message: 'Request approved successfully', members: newCount };
     } catch (e) {
