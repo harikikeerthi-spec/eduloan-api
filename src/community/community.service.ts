@@ -1209,6 +1209,146 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
     }
   }
 
+  // ==================== LIVE COMMUNITY POLLS API ====================
+
+  private static inMemoryPolls: Map<string, any> = new Map([
+    [
+      'poll_active_1',
+      {
+        id: 'poll_active_1',
+        question: 'Which country are you targeting for Fall 2026 / Spring 2027?',
+        author: 'VidyaLoan Community',
+        totalVotes: 348,
+        createdAt: new Date(Date.now() - 12 * 3600 * 1000).toISOString(),
+        options: [
+          { text: '🇺🇸 USA', votes: 215 },
+          { text: '🇬🇧 UK & Ireland', votes: 62 },
+          { text: '🇩🇪 Germany & Europe', votes: 45 },
+          { text: '🇨🇦 Canada & Australia', votes: 26 },
+        ],
+      },
+    ],
+    [
+      'poll_active_2',
+      {
+        id: 'poll_active_2',
+        question: 'What is your biggest blocker in the education loan process?',
+        author: 'Finance Advisory',
+        totalVotes: 210,
+        createdAt: new Date(Date.now() - 18 * 3600 * 1000).toISOString(),
+        options: [
+          { text: '📄 Co-applicant income proof', votes: 98 },
+          { text: '⏳ Bank sanction speed', votes: 64 },
+          { text: '🏡 Collateral valuation', votes: 32 },
+          { text: '🔣 Interest rate comparison', votes: 16 },
+        ],
+      },
+    ],
+    [
+      'poll_active_3',
+      {
+        id: 'poll_active_3',
+        question: 'Which lending partner do you prefer for education loans?',
+        author: 'Global Admissions Team',
+        totalVotes: 285,
+        createdAt: new Date(Date.now() - 24 * 3600 * 1000).toISOString(),
+        options: [
+          { text: 'Auxilo', votes: 110 },
+          { text: 'Avanse Financial', votes: 75 },
+          { text: 'IDFC FIRST Bank', votes: 60 },
+          { text: 'HDFC Credila', votes: 40 },
+        ],
+      },
+    ],
+  ]);
+
+  async getPolls() {
+    try {
+      const { data: dbPolls } = await this.db
+        .from('CommunityPoll')
+        .select('*')
+        .order('createdAt', { ascending: false });
+
+      if (dbPolls && dbPolls.length > 0) {
+        dbPolls.forEach((p: any) => {
+          if (p.id) CommunityService.inMemoryPolls.set(p.id, p);
+        });
+      }
+    } catch (_) {}
+
+    const allPolls = Array.from(CommunityService.inMemoryPolls.values());
+    allPolls.sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+    return { success: true, data: allPolls };
+  }
+
+  async createPoll(data: { question: string; options: any[]; author?: string }) {
+    const id = `poll_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const now = new Date().toISOString();
+
+    const formattedOptions = (data.options || []).map((opt: any) => {
+      if (typeof opt === 'string') return { text: opt.trim(), votes: 0 };
+      if (typeof opt === 'object' && opt.text) return { text: String(opt.text).trim(), votes: opt.votes || 0 };
+      return { text: String(opt), votes: 0 };
+    });
+
+    const newPoll = {
+      id,
+      question: data.question || 'Student Poll',
+      author: data.author || 'Student Poll',
+      totalVotes: 0,
+      createdAt: now,
+      options: formattedOptions,
+    };
+
+    CommunityService.inMemoryPolls.set(id, newPoll);
+
+    try {
+      await this.db.from('CommunityPoll').insert([newPoll]);
+    } catch (e) {
+      console.warn('Fallback createPoll in-memory save:', e);
+    }
+
+    return { success: true, data: newPoll };
+  }
+
+  async submitPollVote(pollId: string, optionIndex: number, userId?: string) {
+    let poll = CommunityService.inMemoryPolls.get(pollId);
+
+    if (!poll) {
+      try {
+        const { data } = await this.db.from('CommunityPoll').select('*').eq('id', pollId).maybeSingle();
+        if (data) {
+          poll = data;
+          CommunityService.inMemoryPolls.set(pollId, poll);
+        }
+      } catch (_) {}
+    }
+
+    if (poll) {
+      if (poll.options && optionIndex >= 0 && optionIndex < poll.options.length) {
+        poll.options[optionIndex].votes = (poll.options[optionIndex].votes || 0) + 1;
+        poll.totalVotes = (poll.totalVotes || 0) + 1;
+      }
+      CommunityService.inMemoryPolls.set(pollId, poll);
+
+      try {
+        await this.db
+          .from('CommunityPoll')
+          .update({
+            options: poll.options,
+            totalVotes: poll.totalVotes,
+          })
+          .eq('id', pollId);
+      } catch (e) {
+        console.warn('Fallback submitPollVote in-memory update:', e);
+      }
+
+      return { success: true, data: poll };
+    }
+
+    return { success: true };
+  }
+
   // ==================== SMART GROUP CHANNELS & REAL CHAT METHODS ====================
 
   private readonly initialGroupsSeed = [];

@@ -1090,6 +1090,28 @@ export class CommunityController {
     ) {
         return this.communityService.deleteGroupMessage(groupId, messageId);
     }
+
+    // ==================== COMMUNITY POLLS API ====================
+
+    @Get('polls')
+    async getPolls() {
+        return this.communityService.getPolls();
+    }
+
+    @Post('polls')
+    async createPoll(@Body() body: any) {
+        return this.communityService.createPoll(body);
+    }
+
+    @Post('polls/:id/vote')
+    async submitPollVote(
+        @Param('id') id: string,
+        @Body() body: any,
+        @Request() req: any,
+    ) {
+        const userId = req?.user?.id;
+        return this.communityService.submitPollVote(id, body?.optionIndex ?? 0, userId);
+    }
 }
 
 
