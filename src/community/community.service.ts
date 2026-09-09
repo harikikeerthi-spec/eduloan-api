@@ -1045,7 +1045,7 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
 
       const formatted = Array.from(msgMap.values()).map((m: any) => {
         const rawContent = m.content || m.text || '';
-        const isMe = normUser ? this.isSameUser(m.senderId, normUser) : (m.isMe ?? false);
+        const isMe = normUser ? this.isSameUser(m.senderId, normUser) : false;
         return {
           id: m.id,
           conversationId: m.conversationId,
@@ -1067,7 +1067,7 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
       console.error('[CommunityService] getDirectMessages fallback to memory:', e);
       const formatted = memMsgs.map((m: any) => {
         const rawContent = m.content || m.text || '';
-        const isMe = normUser ? this.isSameUser(m.senderId, normUser) : (m.isMe ?? false);
+        const isMe = normUser ? this.isSameUser(m.senderId, normUser) : false;
         return {
           ...m,
           text: this.maskPhoneNumbers(rawContent),
@@ -1103,7 +1103,6 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
       content: data.text,
       text: maskedText,
       isRead: false,
-      isMe: true,
       timestamp: now,
       createdAt: now,
     };
@@ -1222,19 +1221,25 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
     if (!g) return false;
     const id = String(g.id || '').toLowerCase();
     const title = String(g.title || '').toLowerCase().trim();
-    const staticIds = ['usa_fall26', 'visa_docs', 'loan_squad', 'uk_europe', 'group_1', 'group_2', 'group_3', 'group_4'];
-    const staticTitles = [
-      'usa fall 2026 aspirants',
-      'visa & documentation squad',
-      'visa & documentation s...',
-      'loan & financial aid squad',
-      'uk & europe scholars',
+    const staticIds = [
+      'usa_fall26', 'visa_docs', 'loan_squad', 'uk_europe',
+      'group_1', 'group_2', 'group_3', 'group_4'
     ];
-    return staticIds.includes(id) || staticTitles.some(st => title.startsWith(st) || title.includes('usa fall') || title.includes('visa & documentation') || title.includes('loan & financial aid') || title.includes('uk & europe scholars'));
+    const staticKeywords = [
+      'usa fall', 'visa & doc', 'loan & financial aid', 'uk & europe', 'gre/ielts prep'
+    ];
+    return staticIds.includes(id) || staticKeywords.some(kw => id.includes(kw) || title.includes(kw));
   }
 
   async getSmartGroups() {
     const now = Date.now();
+    // Actively purge any static groups from in-memory cache
+    for (const [gid, g] of CommunityService.inMemoryGroups.entries()) {
+      if (this.isStaticGroup(g) || this.isStaticGroup({ id: gid })) {
+        CommunityService.inMemoryGroups.delete(gid);
+      }
+    }
+
     if (CommunityService.cachedSmartGroups && (now - CommunityService.lastGroupsFetch < 12000)) {
       return { success: true, data: CommunityService.cachedSmartGroups };
     }
