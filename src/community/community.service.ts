@@ -7,16 +7,18 @@ const hubToDbCategories: Record<string, string[]> = {
   loan: ['Education Loans'],
   'education loans': ['Education Loans'],
   universities: ['Universities'],
-  courses: ['Courses'],
-  scholarships: ['Scholarship'],
-  scholarship: ['Scholarship'],
+  courses: ['Courses', 'Courses & Programs'],
+  'courses & programs': ['Courses', 'Courses & Programs'],
+  scholarships: ['Scholarship', 'Scholarships'],
+  scholarship: ['Scholarship', 'Scholarships'],
   visa: ['Visa & Immigration'],
   'visa & immigration': ['Visa & Immigration'],
   accommodation: ['Accommodation'],
-  gre: ['GRE / GMAT', 'IELTS / TOEFL', 'Exams'],
-  'gre / gmat': ['GRE / GMAT', 'IELTS / TOEFL', 'Exams'],
-  'ielts / toefl': ['GRE / GMAT', 'IELTS / TOEFL', 'Exams'],
-  exams: ['GRE / GMAT', 'IELTS / TOEFL', 'Exams'],
+  gre: ['GRE / GMAT', 'IELTS / TOEFL', 'Exams', 'Exams & Test Prep'],
+  'gre / gmat': ['GRE / GMAT', 'IELTS / TOEFL', 'Exams', 'Exams & Test Prep'],
+  'ielts / toefl': ['GRE / GMAT', 'IELTS / TOEFL', 'Exams', 'Exams & Test Prep'],
+  exams: ['Exams', 'Exams & Test Prep', 'GRE / GMAT', 'IELTS / TOEFL'],
+  'exams & test prep': ['Exams', 'Exams & Test Prep', 'GRE / GMAT', 'IELTS / TOEFL'],
   jobs: ['Career & Jobs'],
   'career & jobs': ['Career & Jobs'],
   general: ['General'],
@@ -1306,6 +1308,91 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
       await this.db.from('CommunityPoll').insert([newPoll]);
     } catch (e) {
       console.warn('Fallback createPoll in-memory save:', e);
+    }
+
+    // ==================== BROADCAST NOTIFICATION TO EACH AND EVERY USER ====================
+    try {
+      const notifId = `notif-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      const notifTitle = '📊 New Community Poll Published!';
+      const notifBody = `${newPoll.author} posted: "${newPoll.question}"`;
+
+      // 1. In-App Notification record for ALL users in Supabase
+      const pollNotification = {
+        id: notifId,
+        userId: 'all',
+        title: notifTitle,
+        body: notifBody,
+        type: 'POLL',
+        isRead: false,
+        timestamp: now,
+        metadata: {
+          pollId: id,
+          question: newPoll.question,
+          author: newPoll.author,
+          route: '/community',
+        },
+      };
+
+      await this.db.from('Notification').insert([pollNotification]);
+    } catch (dbNotifErr) {
+      console.warn('Database notification insert error on poll create:', dbNotifErr);
+    }
+
+    // 2. Mobile Push Notification Broadcast via Firebase Admin
+    try {
+      const admin = require('firebase-admin');
+      if (admin.apps && admin.apps.length > 0) {
+        const notifTitle = '📊 New Community Poll Published!';
+        const notifBody = `${newPoll.author}: "${newPoll.question}"`;
+
+        // A. Topic broadcast to all subscribed devices
+        try {
+          await admin.messaging().send({
+            topic: 'all_users',
+            notification: {
+              title: notifTitle,
+              body: notifBody,
+            },
+            data: {
+              type: 'POLL',
+              pollId: id,
+              title: notifTitle,
+              body: newPoll.question,
+            },
+          });
+        } catch (_) {}
+
+        // B. Direct multicast to all active FCM tokens in database
+        try {
+          const { data: usersWithTokens } = await this.db
+            .from('User')
+            .select('fcmToken')
+            .not('fcmToken', 'is', null)
+            .limit(500);
+
+          const tokens = (usersWithTokens || [])
+            .map((u: any) => u.fcmToken)
+            .filter((t: any) => typeof t === 'string' && t.length > 10);
+
+          if (tokens.length > 0) {
+            await admin.messaging().sendEachForMulticast({
+              tokens,
+              notification: {
+                title: notifTitle,
+                body: notifBody,
+              },
+              data: {
+                type: 'POLL',
+                pollId: id,
+                title: notifTitle,
+                body: newPoll.question,
+              },
+            });
+          }
+        } catch (_) {}
+      }
+    } catch (fcmErr) {
+      console.warn('FCM broadcast notification error on poll create:', fcmErr);
     }
 
     return { success: true, data: newPoll };

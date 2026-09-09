@@ -1,7 +1,9 @@
 import {
   Controller,
   Get,
+  Post,
   Put,
+  Body,
   Param,
   Query,
   Req,
@@ -54,5 +56,30 @@ export class NotificationController {
   async markAllRead(@Req() req: any) {
     const result = await this.notificationService.markAllAsRead(req.user);
     return result;
+  }
+
+  @Post()
+  async createNotification(@Body() body: any, @Req() req: any) {
+    const targetUserId = body.userId || req?.user?.id || 'all';
+    const result = await this.notificationService.createNotification(
+      targetUserId,
+      body.title || 'VidyaLoans Notification',
+      body.body || body.message || '',
+      body.type || 'NOTIFICATION',
+      body.metadata,
+    );
+    return { success: true, data: result };
+  }
+
+  @Post('broadcast')
+  async broadcastNotification(@Body() body: any) {
+    const result = await this.notificationService.createNotification(
+      'all',
+      body.title || 'VidyaLoans Announcement',
+      body.body || body.message || '',
+      body.type || 'BROADCAST',
+      body.metadata,
+    );
+    return { success: true, data: result };
   }
 }
