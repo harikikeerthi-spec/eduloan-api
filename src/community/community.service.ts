@@ -486,7 +486,7 @@ export class CommunityService {
       return { ...p, score };
     });
 
-    scored.sort((a, b) => b.score - a.score);
+    scored.sort((a: any, b: any) => b.score - a.score);
     const top5 = scored.slice(0, 5).map(({ score, ...p }: any) => ({
       ...p,
       commentCount: Array.isArray(p.comments) ? (p.comments[0]?.count ?? 0) : 0,
@@ -716,7 +716,8 @@ export class CommunityService {
     this.otpStore.set(email, { otp, expiresAt });
 
     console.log(`\n🔐 OTP for ${email}: ${otp}\n`);
-    return { success: true, message: 'OTP sent to your email. Please check your inbox.', data: { email, expiresIn: 300, ...(process.env.NODE_ENV === 'development' ? { otp } : {}) } };
+    const isDev = typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'development';
+    return { success: true, message: 'OTP sent to your email. Please check your inbox.', data: { email, expiresIn: 300, ...(isDev ? { otp } : {}) } };
   }
 
   async verifyMentorOTP(email: string, otp: string) {
@@ -737,7 +738,7 @@ export class CommunityService {
     if (!mentor) throw new NotFoundException('Mentor not found');
 
     const { data: bookings } = await this.db.from('MentorBooking').select('status').eq('mentorId', mentorId);
-    const stats = { total: 0, pending: 0, approved: 0, rejected: 0, completed: 0 };
+    const stats: Record<string, number> = { total: 0, pending: 0, approved: 0, rejected: 0, completed: 0 };
     (bookings || []).forEach((b: any) => { stats.total++; if (stats[b.status] !== undefined) stats[b.status]++; });
 
     return { success: true, data: { mentor, stats } };
@@ -857,14 +858,14 @@ export class CommunityService {
       const aiResponse = await this.openRouterService.getJson<{ matches: Array<{ id: string; title: string; similarity: number; reason: string }> }>(prompt);
 
       const validMatches = (aiResponse.matches || [])
-        .filter((m) => m.similarity >= 0.7)
+        .filter((m: any) => m.similarity >= 0.7)
         .slice(0, 5)
-        .map((m) => ({ id: m.id, title: m.title, similarity: m.similarity, reason: m.reason, url: `/community/discussions/${m.id}` }));
+        .map((m: any) => ({ id: m.id, title: m.title, similarity: m.similarity, reason: m.reason, url: `/community/discussions/${m.id}` }));
 
       return { isDuplicate: validMatches.length > 0, similarQuestions: validMatches, message: validMatches.length > 0 ? `Found ${validMatches.length} similar question(s)` : 'No similar questions found' };
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error in duplicate question detection:', error);
-      return { isDuplicate: false, similarQuestions: [], message: 'Duplicate check unavailable, but you can still post your question', error: error.message };
+      return { isDuplicate: false, similarQuestions: [], message: 'Duplicate check unavailable, but you can still post your question', error: error?.message };
     }
   }
 
