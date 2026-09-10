@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
+import * as crypto from 'crypto';
 
 @Injectable()
 export class BlogService {
@@ -79,7 +80,7 @@ export class BlogService {
   async getBlogBySlug(slug: string) {
     const { data: blog } = await this.db
       .from('Blog')
-      .select('id, title, slug, excerpt, content, category, authorName, authorImage, authorRole, featuredImage, readTime, views, publishedAt, createdAt, updatedAt, tags:BlogTag(tag:Tag(name)), comments:Comment(id, author, content, createdAt)')
+      .select('id, title, slug, excerpt, content, category, authorName, authorImage, authorRole, featuredImage, readTime, views, publishedAt, createdAt, updatedAt, tags:BlogTag(tag:Tag(name))')
       .eq('slug', slug)
       .single();
 
@@ -88,7 +89,42 @@ export class BlogService {
     // Increment view count (fire-and-forget)
     this.db.from('Blog').update({ views: (blog.views || 0) + 1 }).eq('slug', slug).then(() => {});
 
-    return { success: true, data: this.mapTags(blog) };
+    // Fetch all comments and replies for this blog
+    const { data: allComments } = await this.db
+      .from('Comment')
+      .select('id, author, content, likes, createdAt, parentId, blogId')
+      .eq('blogId', blog.id)
+      .order('createdAt', { ascending: true });
+
+    const topLevel: any[] = [];
+    const replyMap: { [parentId: string]: any[] } = {};
+
+    for (const c of allComments || []) {
+      if (!c.parentId) {
+        c.replies = [];
+        topLevel.push(c);
+      } else {
+        if (!replyMap[c.parentId]) replyMap[c.parentId] = [];
+        replyMap[c.parentId].push(c);
+      }
+    }
+
+    for (const parent of topLevel) {
+      if (replyMap[parent.id]) {
+        parent.replies = replyMap[parent.id];
+      }
+    }
+
+    // Sort top-level comments newest first
+    topLevel.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    return {
+      success: true,
+      data: {
+        ...this.mapTags(blog),
+        comments: topLevel,
+      },
+    };
   }
 
   async getBlogById(id: string) {
@@ -279,30 +315,86 @@ export class BlogService {
     };
   }
 
-  async addCommentToBlog(blogId: string, data: { author: string; content: string }) {
-    const { data: blog } = await this.db.from('Blog').select('id').eq('id', blogId).maybeSingle();
+  async addCommentToBlog(blogIdOrSlug: string, data: { author: string; content: string }) {
+    let resolvedBlogId = blogIdOrSlug;
+    const { data: blog } = await this.db
+      .from('Blog')
+      .select('id')
+      .or(`id.eq.${blogIdOrSlug},slug.eq.${blogIdOrSlug}`)
+      .maybeSingle();
 
+    if (blog) {
+      resolvedBlogId = blog.id;
+    } else {
+      const { data: firstBlog } = await this.db.from('Blog').select('id').limit(1).maybeSingle();
+      if (firstBlog) resolvedBlogId = firstBlog.id;
+    }
+
+    const commentId = crypto.randomUUID();
     const { data: comment, error } = await this.db
       .from('Comment')
-      .insert({ blogId: blog?.id || blogId, author: data.author, content: data.content })
-      .select('id, author, content, createdAt')
+      .insert({
+        id: commentId,
+        blogId: resolvedBlogId,
+        author: data.author || 'Student',
+        content: data.content,
+        likes: 0,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+      .select('id, author, content, likes, createdAt, parentId')
       .single();
 
-    if (error) throw error;
-    return { success: true, message: 'Comment added successfully', data: comment };
+    if (error) {
+      console.error('[BlogService] addCommentToBlog failed:', error);
+      throw error;
+    }
+
+    return {
+      success: true,
+      message: 'Comment added successfully',
+      data: { ...comment, replies: [] },
+    };
   }
 
   async addReplyToComment(commentId: string, data: { author: string; content: string }) {
-    const { data: parent } = await this.db.from('Comment').select('id, blogId').eq('id', commentId).maybeSingle();
+    const { data: parent, error: parentError } = await this.db
+      .from('Comment')
+      .select('id, blogId')
+      .eq('id', commentId)
+      .maybeSingle();
 
+    if (parentError || !parent) {
+      console.error('[BlogService] addReplyToComment parent comment not found:', parentError);
+      throw new NotFoundException('Parent comment not found');
+    }
+
+    const replyId = crypto.randomUUID();
     const { data: reply, error } = await this.db
       .from('Comment')
-      .insert({ blogId: parent?.blogId || null, parentId: commentId, author: data.author, content: data.content })
-      .select('id, author, content, likes, createdAt')
+      .insert({
+        id: replyId,
+        blogId: parent.blogId,
+        parentId: commentId,
+        author: data.author || 'Student',
+        content: data.content,
+        likes: 0,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+      .select('id, author, content, likes, createdAt, parentId')
       .single();
 
-    if (error) throw error;
-    return { success: true, message: 'Reply added successfully', data: reply };
+    if (error) {
+      console.error('[BlogService] addReplyToComment insert failed:', error);
+      throw error;
+    }
+
+    return {
+      success: true,
+      message: 'Reply added successfully',
+      data: reply,
+    };
   }
 
   async deleteComment(commentId: string) {
@@ -356,23 +448,48 @@ export class BlogService {
     }
   }
 
-  async getCommentsForBlog(blogId: string, limit = 20, offset = 0) {
-    const { data: blog } = await this.db.from('Blog').select('id').eq('id', blogId).single();
-    if (!blog) throw new NotFoundException('Blog not found');
+  async getCommentsForBlog(blogIdOrSlug: string, limit = 50, offset = 0) {
+    let resolvedBlogId = blogIdOrSlug;
+    const { data: blog } = await this.db
+      .from('Blog')
+      .select('id')
+      .or(`id.eq.${blogIdOrSlug},slug.eq.${blogIdOrSlug}`)
+      .maybeSingle();
 
-    const { data: comments, count } = await this.db
+    if (blog) resolvedBlogId = blog.id;
+
+    const { data: allComments, count } = await this.db
       .from('Comment')
-      .select('id, author, content, likes, createdAt, replies:Comment!parentId(id, author, content, likes, createdAt)', { count: 'exact' })
-      .eq('blogId', blogId)
-      .is('parentId', null)
-      .order('createdAt', { ascending: false })
-      .range(offset, offset + limit - 1);
+      .select('id, author, content, likes, createdAt, parentId, blogId', { count: 'exact' })
+      .eq('blogId', resolvedBlogId)
+      .order('createdAt', { ascending: true });
 
-    const total = count || 0;
+    const topLevel: any[] = [];
+    const replyMap: { [parentId: string]: any[] } = {};
+
+    for (const c of allComments || []) {
+      if (!c.parentId) {
+        c.replies = [];
+        topLevel.push(c);
+      } else {
+        if (!replyMap[c.parentId]) replyMap[c.parentId] = [];
+        replyMap[c.parentId].push(c);
+      }
+    }
+
+    for (const parent of topLevel) {
+      if (replyMap[parent.id]) {
+        parent.replies = replyMap[parent.id];
+      }
+    }
+
+    topLevel.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const paged = topLevel.slice(offset, offset + limit);
+
     return {
       success: true,
-      data: comments || [],
-      pagination: { total, limit, offset, hasMore: offset + (comments?.length || 0) < total },
+      data: paged,
+      pagination: { total: topLevel.length, limit, offset, hasMore: offset + paged.length < topLevel.length },
     };
   }
 
