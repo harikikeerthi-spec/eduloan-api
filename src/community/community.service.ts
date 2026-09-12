@@ -450,11 +450,33 @@ export class CommunityService {
     let commentsWithLikes: any[] = [];
     let totalCommentCount = 0;
     try {
-      const { data: rawComments } = await this.db
+      let rawComments: any[] | null = null;
+      const resWithAuthor = await this.db
         .from('ForumComment')
         .select('*, author:User!authorId(firstName, lastName, id, role)')
         .eq('postId', id)
         .order('createdAt', { ascending: true });
+
+      if (resWithAuthor.error || !resWithAuthor.data) {
+        const resSimple = await this.db
+          .from('ForumComment')
+          .select('*')
+          .eq('postId', id)
+          .order('createdAt', { ascending: true });
+        rawComments = resSimple.data || [];
+        if (rawComments && rawComments.length > 0) {
+          const authorIds = [...new Set(rawComments.map(c => c.authorId).filter(Boolean))];
+          if (authorIds.length > 0) {
+            const { data: users } = await this.db.from('User').select('id, firstName, lastName, role').in('id', authorIds);
+            const userMap = new Map((users || []).map((u: any) => [u.id, u]));
+            rawComments.forEach((c: any) => {
+              c.author = userMap.get(c.authorId) || null;
+            });
+          }
+        }
+      } else {
+        rawComments = resWithAuthor.data;
+      }
 
       if (rawComments && rawComments.length > 0) {
         totalCommentCount = rawComments.length;
@@ -703,7 +725,7 @@ export class CommunityService {
     const { data: post } = await this.db.from('ForumPost').select('id').eq('id', postId).maybeSingle();
     if (!post) throw new NotFoundException('Post not found');
 
-    const { data: comment, error } = await this.db
+    let { data: comment, error } = await this.db
       .from('ForumComment')
       .insert({
         content: trimmedContent,
@@ -715,9 +737,29 @@ export class CommunityService {
       .select('*, author:User!authorId(firstName, lastName, id, role)')
       .maybeSingle();
 
-    if (error) {
-      console.error('[CommunityService] Error inserting ForumComment:', error);
-      throw new BadRequestException('Failed to create comment: ' + error.message);
+    if (error || !comment) {
+      console.warn('[CommunityService] Error inserting with author relation, trying plain insert:', error);
+      const res = await this.db
+        .from('ForumComment')
+        .insert({
+          content: trimmedContent,
+          postId,
+          authorId: userId,
+          parentId: parentId || null,
+          updatedAt: new Date().toISOString()
+        })
+        .select('*')
+        .maybeSingle();
+
+      if (res.error) {
+        console.error('[CommunityService] Error inserting ForumComment:', res.error);
+        throw new BadRequestException('Failed to create comment: ' + res.error.message);
+      }
+      comment = res.data;
+      if (comment) {
+        const { data: user } = await this.db.from('User').select('id, firstName, lastName, role').eq('id', userId).maybeSingle();
+        comment.author = user || null;
+      }
     }
 
     return { success: true, message: 'Comment added successfully', data: comment };
