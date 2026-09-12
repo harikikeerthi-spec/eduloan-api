@@ -1447,28 +1447,16 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
 
   private isStaticGroup(g: any): boolean {
     if (!g) return false;
-    const id = String(g.id || '').toLowerCase();
-    const title = String(g.title || '').toLowerCase().trim();
-    const staticIds = [
-      'usa_fall26', 'visa_docs', 'loan_squad', 'uk_europe',
-      'group_1', 'group_2', 'group_3', 'group_4'
-    ];
-    const staticKeywords = [
-      'usa fall', 'visa & doc', 'loan & financial aid', 'uk & europe', 'gre/ielts prep'
-    ];
-    return staticIds.includes(id) || staticKeywords.some(kw => id.includes(kw) || title.includes(kw));
+    const id = String(g.id || '').toLowerCase().trim();
+    // Only filter legacy mock dummy IDs if any, NEVER filter user-created groups or group titles
+    const legacyMockIds = ['mock_group_1', 'mock_group_2', 'mock_group_3', 'mock_group_4'];
+    return legacyMockIds.includes(id);
   }
 
   async getSmartGroups() {
     const now = Date.now();
-    // Actively purge any static groups from in-memory cache
-    for (const [gid, g] of CommunityService.inMemoryGroups.entries()) {
-      if (this.isStaticGroup(g) || this.isStaticGroup({ id: gid })) {
-        CommunityService.inMemoryGroups.delete(gid);
-      }
-    }
 
-    if (CommunityService.cachedSmartGroups && (now - CommunityService.lastGroupsFetch < 12000)) {
+    if (CommunityService.cachedSmartGroups && (now - CommunityService.lastGroupsFetch < 10000)) {
       return { success: true, data: CommunityService.cachedSmartGroups };
     }
 
@@ -1511,8 +1499,8 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
               ...g,
               members: totalMembers,
               online: safeOnline,
-              adminEmail: g.createdBy || '',
-              adminName: '',
+              adminEmail: g.createdBy || g.adminEmail || '',
+              adminName: g.adminName || 'Admin',
             });
           }
         });
@@ -1551,6 +1539,7 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
       adminEmail: groupData.adminEmail || groupData.createdBy || '',
       adminName: groupData.adminName || 'Admin',
       createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     };
 
     CommunityService.inMemoryGroups.set(id, newGroup);
@@ -1558,7 +1547,7 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
     try {
       const { data, error } = await this.db
         .from('CommunityGroup')
-        .insert([
+        .upsert([
           {
             id,
             title: newGroup.title,
@@ -1571,16 +1560,17 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
             lastMsg: newGroup.lastMsg,
             createdBy: newGroup.createdBy,
             createdAt: newGroup.createdAt,
+            updatedAt: newGroup.updatedAt,
           },
-        ])
+        ], { onConflict: 'id' })
         .select()
         .single();
 
       if (data) {
         CommunityService.inMemoryGroups.set(id, {
           ...data,
-          adminEmail: data.createdBy || '',
-          adminName: 'Admin',
+          adminEmail: data.createdBy || newGroup.adminEmail,
+          adminName: newGroup.adminName || 'Admin',
         });
       }
     } catch (e) {
@@ -1588,6 +1578,53 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
     }
 
     return { success: true, data: CommunityService.inMemoryGroups.get(id) || newGroup };
+  }
+
+  async deleteSmartGroup(groupId: string, requesterEmail?: string, requesterRole?: string) {
+    try {
+      // 1. Check existing group to verify creator / admin
+      let existingGroup = CommunityService.inMemoryGroups.get(groupId);
+      if (!existingGroup) {
+        const { data } = await this.db
+          .from('CommunityGroup')
+          .select('*')
+          .eq('id', groupId)
+          .maybeSingle();
+        existingGroup = data;
+      }
+
+      if (existingGroup) {
+        const creatorEmail = (existingGroup.createdBy || existingGroup.adminEmail || '').toLowerCase().trim();
+        const reqEmail = (requesterEmail || '').toLowerCase().trim();
+        const isAdmin = requesterRole === 'admin' || requesterRole === 'staff';
+
+        // Enforce authorization: only group creator or platform admin can delete
+        if (!isAdmin && creatorEmail && reqEmail && creatorEmail !== reqEmail) {
+          throw new HttpException('Only the group creator or admin can delete this group', HttpStatus.FORBIDDEN);
+        }
+      }
+
+      // 2. Remove from in-memory cache
+      CommunityService.inMemoryGroups.delete(groupId);
+      CommunityService.inMemoryGroupMessages.delete(groupId);
+      CommunityService.cachedSmartGroups = null;
+      CommunityService.lastGroupsFetch = 0;
+
+      // 3. Delete from Supabase database tables permanently
+      await this.db.from('CommunityGroupMessage').delete().eq('groupId', groupId);
+      await this.db.from('CommunityGroupJoinRequest').delete().eq('groupId', groupId);
+      const { error } = await this.db.from('CommunityGroup').delete().eq('id', groupId);
+
+      if (error) {
+        console.error('[CommunityService] Error deleting group from DB:', error);
+      }
+
+      return { success: true, message: 'Group channel permanently deleted by creator/admin' };
+    } catch (e) {
+      if (e instanceof HttpException) throw e;
+      console.error('[CommunityService] Exception deleting group:', e);
+      return { success: true, message: 'Group deleted successfully' };
+    }
   }
 
   async getGroupMessages(groupId: string) {

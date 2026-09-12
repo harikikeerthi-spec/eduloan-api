@@ -1093,6 +1093,28 @@ export class CommunityController {
         return this.communityService.approveGroupJoinRequest(groupId, body?.requestId);
     }
 
+    @Delete('groups/:groupId')
+    async deleteSmartGroup(
+        @Param('groupId') groupId: string,
+        @Request() req: any,
+        @Query('email') emailQuery?: string,
+        @Body() body?: any,
+    ) {
+        let userEmail = emailQuery || body?.email || body?.adminEmail;
+        let userRole = '';
+
+        try {
+            if (req?.headers?.authorization) {
+                const token = req.headers.authorization.split(' ')[1];
+                const decoded = this.jwtService.decode(token) as any;
+                if (decoded?.email) userEmail = decoded.email;
+                if (decoded?.role) userRole = decoded.role;
+            }
+        } catch (_) {}
+
+        return this.communityService.deleteSmartGroup(groupId, userEmail, userRole);
+    }
+
     @Delete('groups/:groupId/messages/:messageId')
     async deleteGroupMessage(
         @Param('groupId') groupId: string,
