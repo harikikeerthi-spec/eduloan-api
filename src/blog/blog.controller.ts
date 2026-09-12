@@ -287,6 +287,15 @@ export class BlogController {
     }
 
     /**
+     * Get comments liked by user/device
+     * GET /blogs/comments/likes/:userId
+     */
+    @Get('comments/likes/:userId')
+    async getLikedComments(@Param('userId') userId: string) {
+        return this.blogService.getLikedComments(userId);
+    }
+
+    /**
      * Get blog statistics
      * GET /blogs/:id/stats
      * @param id - Blog ID

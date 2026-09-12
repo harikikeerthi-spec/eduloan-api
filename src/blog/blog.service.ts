@@ -425,26 +425,54 @@ export class BlogService {
   async toggleCommentLike(commentId: string, userId: string) {
     const { data: comment } = await this.db.from('Comment').select('id, likes').eq('id', commentId).maybeSingle();
     if (!comment) {
-      return { success: true, message: 'Comment unliked', liked: false, likesCount: 0 };
+      return { success: true, message: 'Comment not found', liked: false, likesCount: 0 };
     }
 
-    const { data: existing } = await this.db
-      .from('CommentLike')
-      .select('id')
-      .eq('commentId', commentId)
-      .eq('userId', userId)
-      .maybeSingle();
-
     const currentLikes = comment.likes || 0;
+    let existing: any = null;
+
+    try {
+      const { data } = await this.db
+        .from('CommentLike')
+        .select('id')
+        .eq('commentId', commentId)
+        .eq('userId', userId)
+        .maybeSingle();
+      existing = data;
+    } catch (e) {
+      console.warn('[BlogService] Error querying CommentLike:', e);
+    }
 
     if (existing) {
-      await this.db.from('CommentLike').delete().eq('id', existing.id);
-      await this.db.from('Comment').update({ likes: Math.max(0, currentLikes - 1) }).eq('id', commentId);
-      return { success: true, message: 'Comment unliked', liked: false, likesCount: Math.max(0, currentLikes - 1) };
+      try {
+        await this.db.from('CommentLike').delete().eq('id', existing.id);
+      } catch (_) {}
+      const newCount = Math.max(0, currentLikes - 1);
+      await this.db.from('Comment').update({ likes: newCount }).eq('id', commentId);
+      return { success: true, message: 'Comment unliked', liked: false, likesCount: newCount };
     } else {
-      await this.db.from('CommentLike').insert({ commentId, userId });
-      await this.db.from('Comment').update({ likes: currentLikes + 1 }).eq('id', commentId);
-      return { success: true, message: 'Comment liked', liked: true, likesCount: currentLikes + 1 };
+      try {
+        await this.db.from('CommentLike').insert({ commentId, userId });
+      } catch (err) {
+        console.warn('[BlogService] Error inserting CommentLike:', err);
+      }
+      const newCount = currentLikes + 1;
+      await this.db.from('Comment').update({ likes: newCount }).eq('id', commentId);
+      return { success: true, message: 'Comment liked', liked: true, likesCount: newCount };
+    }
+  }
+
+  async getLikedComments(userId: string) {
+    if (!userId) return { success: true, data: [] };
+    try {
+      const { data } = await this.db
+        .from('CommentLike')
+        .select('commentId')
+        .eq('userId', userId);
+      return { success: true, data: (data || []).map((d: any) => d.commentId) };
+    } catch (e) {
+      console.warn('[BlogService] Error fetching liked comments for user:', e);
+      return { success: true, data: [] };
     }
   }
 
