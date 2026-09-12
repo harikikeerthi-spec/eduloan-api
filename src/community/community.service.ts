@@ -1305,7 +1305,7 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
     CommunityService.inMemoryPolls.set(id, newPoll);
 
     try {
-      await this.db.from('CommunityPoll').insert([newPoll]);
+      await this.db.from('CommunityPoll').upsert([newPoll], { onConflict: 'id' });
     } catch (e) {
       console.warn('Fallback createPoll in-memory save:', e);
     }

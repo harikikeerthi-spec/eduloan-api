@@ -74,15 +74,59 @@ export class NotificationService {
     metadata?: any,
   ) {
     try {
-      const { data: user } = await this.db
-        .from('User')
-        .select('fcmToken')
-        .eq('id', userId)
-        .single();
+      const admin = require('firebase-admin');
+      if (!admin.apps || admin.apps.length === 0) return;
 
-      if (user && user.fcmToken) {
-        const admin = require('firebase-admin');
-        if (admin.apps && admin.apps.length > 0) {
+      if (userId === 'all' || userId === 'system' || userId === 'staff') {
+        // 1. Topic broadcast to all subscribed users
+        try {
+          await admin.messaging().send({
+            topic: 'all_users',
+            notification: { title, body },
+            data: {
+              type: type || 'NOTIFICATION',
+              title,
+              body,
+              metadata: JSON.stringify(metadata || {}),
+            },
+          });
+          this.logger.log(`[FCM Push] Broadcast sent to topic 'all_users'`);
+        } catch (_) {}
+
+        // 2. Multicast to all active FCM tokens in database
+        try {
+          const { data: usersWithTokens } = await this.db
+            .from('User')
+            .select('fcmToken')
+            .not('fcmToken', 'is', null)
+            .limit(500);
+
+          const tokens = (usersWithTokens || [])
+            .map((u: any) => u.fcmToken)
+            .filter((t: any) => typeof t === 'string' && t.length > 10);
+
+          if (tokens.length > 0) {
+            await admin.messaging().sendEachForMulticast({
+              tokens,
+              notification: { title, body },
+              data: {
+                type: type || 'NOTIFICATION',
+                title,
+                body,
+                metadata: JSON.stringify(metadata || {}),
+              },
+            });
+            this.logger.log(`[FCM Push] Multicast sent to ${tokens.length} users`);
+          }
+        } catch (_) {}
+      } else {
+        const { data: user } = await this.db
+          .from('User')
+          .select('fcmToken')
+          .eq('id', userId)
+          .maybeSingle();
+
+        if (user && user.fcmToken) {
           const message = {
             token: user.fcmToken,
             notification: {

@@ -14,12 +14,12 @@ import {
 import { NotificationService } from './notification.service';
 import { UserGuard } from '../auth/user.guard';
 
-@UseGuards(UserGuard)
 @Controller('notifications')
 export class NotificationController {
   constructor(private readonly notificationService: NotificationService) {}
 
   @Get()
+  @UseGuards(UserGuard)
   async getNotifications(
     @Req() req: any,
     @Query('type') type?: string,
