@@ -429,13 +429,13 @@ export class CommunityService {
   async getForumPostById(id: string, userId?: string) {
     const { data: post } = await this.db
       .from('ForumPost')
-      .select('*, author:User!authorId(firstName, lastName, id, role), comments:ForumComment!postId(*, author:User!authorId(firstName, lastName, id, role), replies:ForumComment!parentId(*, author:User!authorId(firstName, lastName, id, role)))')
+      .select('*, author:User!authorId(firstName, lastName, id, role)')
       .eq('id', id)
       .maybeSingle();
 
     if (!post) throw new NotFoundException('Post not found');
 
-    // Increment views
+    // Increment views asynchronously
     this.db.from('ForumPost').update({ views: (post.views || 0) + 1 }).eq('id', id).then(() => {});
 
     let liked = false;
@@ -444,27 +444,67 @@ export class CommunityService {
     if (userId) {
       const { data: postLike } = await this.db.from('PostLike').select('id').eq('postId', id).eq('userId', userId).maybeSingle();
       liked = !!postLike;
-
-      const allCommentIds: string[] = [];
-      (post.comments || []).forEach((c: any) => {
-        allCommentIds.push(c.id);
-        (c.replies || []).forEach((r: any) => allCommentIds.push(r.id));
-      });
-
-      if (allCommentIds.length > 0) {
-        const { data: commentLikes } = await this.db.from('ForumCommentLike').select('commentId').eq('userId', userId).in('commentId', allCommentIds);
-        (commentLikes || []).forEach((l: any) => likedCommentIds.add(l.commentId));
-      }
     }
 
-    const topLevelComments = (post.comments || []).filter((c: any) => !c.parentId);
-    const commentsWithLikes = topLevelComments.map((c: any) => ({
-      ...c,
-      liked: likedCommentIds.has(c.id),
-      replies: (c.replies || []).map((r: any) => ({ ...r, liked: likedCommentIds.has(r.id) })),
-    }));
+    // Fetch all comments for this post reliably
+    let commentsWithLikes: any[] = [];
+    let totalCommentCount = 0;
+    try {
+      const { data: rawComments } = await this.db
+        .from('ForumComment')
+        .select('*, author:User!authorId(firstName, lastName, id, role)')
+        .eq('postId', id)
+        .order('createdAt', { ascending: true });
 
-    return { success: true, data: { ...post, comments: commentsWithLikes, commentCount: (post.comments || []).length, liked } };
+      if (rawComments && rawComments.length > 0) {
+        totalCommentCount = rawComments.length;
+        if (userId) {
+          const allCommentIds = rawComments.map((c: any) => c.id);
+          const { data: commentLikes } = await this.db
+            .from('ForumCommentLike')
+            .select('commentId')
+            .eq('userId', userId)
+            .in('commentId', allCommentIds);
+          (commentLikes || []).forEach((l: any) => likedCommentIds.add(l.commentId));
+        }
+
+        // Build comment tree (parents and replies)
+        const commentMap = new Map<string, any>();
+        const rootComments: any[] = [];
+
+        rawComments.forEach((c: any) => {
+          const formatted = {
+            ...c,
+            liked: likedCommentIds.has(c.id),
+            replies: []
+          };
+          commentMap.set(c.id, formatted);
+        });
+
+        rawComments.forEach((c: any) => {
+          const formatted = commentMap.get(c.id);
+          if (c.parentId && commentMap.has(c.parentId)) {
+            commentMap.get(c.parentId).replies.push(formatted);
+          } else {
+            rootComments.push(formatted);
+          }
+        });
+
+        commentsWithLikes = rootComments;
+      }
+    } catch (e) {
+      console.error('[CommunityService] Error fetching comments in getForumPostById:', e);
+    }
+
+    return {
+      success: true,
+      data: {
+        ...post,
+        comments: commentsWithLikes,
+        commentCount: totalCommentCount,
+        liked
+      }
+    };
   }
 
   async searchSimilarPosts(query: string) {
@@ -646,15 +686,40 @@ export class CommunityService {
   }
 
   async createForumComment(userId: string, postId: string, content: string, parentId?: string) {
+    const trimmedContent = (content || '').trim();
+    if (!trimmedContent) throw new BadRequestException('Comment content cannot be empty');
+
     const tenSecondsAgo = new Date(Date.now() - 10000).toISOString();
-    const { data: recentComment } = await this.db.from('ForumComment').select('*').eq('authorId', userId).eq('postId', postId).eq('content', content).gte('createdAt', tenSecondsAgo).maybeSingle();
+    const { data: recentComment } = await this.db
+      .from('ForumComment')
+      .select('*')
+      .eq('authorId', userId)
+      .eq('postId', postId)
+      .eq('content', trimmedContent)
+      .gte('createdAt', tenSecondsAgo)
+      .maybeSingle();
     if (recentComment) return { success: true, data: recentComment };
 
     const { data: post } = await this.db.from('ForumPost').select('id').eq('id', postId).maybeSingle();
     if (!post) throw new NotFoundException('Post not found');
 
-    const { data: comment, error } = await this.db.from('ForumComment').insert({ content, postId, authorId: userId, parentId: parentId || null, updatedAt: new Date().toISOString() }).select('*, author:User!authorId(firstName, lastName, role)').single();
-    if (error) throw error;
+    const { data: comment, error } = await this.db
+      .from('ForumComment')
+      .insert({
+        content: trimmedContent,
+        postId,
+        authorId: userId,
+        parentId: parentId || null,
+        updatedAt: new Date().toISOString()
+      })
+      .select('*, author:User!authorId(firstName, lastName, id, role)')
+      .maybeSingle();
+
+    if (error) {
+      console.error('[CommunityService] Error inserting ForumComment:', error);
+      throw new BadRequestException('Failed to create comment: ' + error.message);
+    }
+
     return { success: true, message: 'Comment added successfully', data: comment };
   }
 
