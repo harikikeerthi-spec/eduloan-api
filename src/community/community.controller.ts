@@ -644,6 +644,73 @@ export class CommunityController {
         return this.communityService.searchSimilarPosts(q || '');
     }
 
+    /**
+     * Get all forum posts (Admin/Public)
+     * GET /community/forum & GET /community/forum/posts
+     * IMPORTANT: Must be declared BEFORE forum/:id to avoid being captured by the dynamic param route.
+     */
+    @Get('forum')
+    @Get('forum/posts')
+    async getForumPosts(
+        @Query('category') category?: string,
+        @Query('topic') topic?: string,
+        @Query('tag') tag?: string,
+        @Query('limit') limit?: string,
+        @Query('offset') offset?: string,
+        @Query('page') page?: string,
+        @Query('sort') sort?: string,
+        @Request() req?,
+    ) {
+        let userId: string | undefined;
+        // Try to get user ID if token present
+        try {
+            if (req?.headers?.authorization) {
+                const token = req.headers.authorization.split(' ')[1];
+                const decoded = this.jwtService.decode(token) as any;
+                userId = decoded?.id;
+            }
+        } catch (e) { }
+
+        const effectiveCategory = category || topic;
+        const parsedLimit = limit ? parseInt(limit, 10) : 20;
+        const parsedOffset = offset ? parseInt(offset, 10) : (page ? (parseInt(page, 10) - 1) * parsedLimit : 0);
+
+        return this.communityService.getForumPosts({
+            category: effectiveCategory,
+            tag,
+            limit: parsedLimit,
+            offset: parsedOffset,
+            sort
+        }, userId);
+    }
+
+    /**
+     * Compatibility: GET /community/posts (alias for /community/forum)
+     */
+    @Get('posts')
+    async getPostsAlias(
+        @Query('topic') topic?: string,
+        @Query('category') categoryParam?: string,
+        @Query('page') page?: string,
+        @Query('limit') limitStr?: string,
+        @Query('sort') sort?: string,
+        @Request() req?,
+    ) {
+        const category = topic || categoryParam;
+        const limit = limitStr ? parseInt(limitStr, 10) : 20;
+        const offset = page ? (parseInt(page, 10) - 1) * limit : 0;
+        let userId: string | undefined;
+        try {
+            if (req?.headers?.authorization) {
+                const token = req.headers.authorization.split(' ')[1];
+                const decoded = this.jwtService.decode(token) as any;
+                userId = decoded?.id;
+            }
+        } catch (e) { }
+
+        return this.communityService.getForumPosts({ category, limit, offset, sort }, userId);
+    }
+
     @Get('forum/:id')
     async getForumPostById(@Param('id') id: string, @Request() req) {
         let userId: string | undefined;
@@ -660,63 +727,6 @@ export class CommunityController {
             // ignore token errors
         }
         return this.communityService.getForumPostById(id, userId);
-    }
-
-    /**
-     * Get all forum posts (Admin/Public)
-     * GET /community/forum & GET /community/forum/posts
-     */
-    @Get('forum')
-    @Get('forum/posts')
-    async getForumPosts(
-        @Query('category') category?: string,
-        @Query('tag') tag?: string,
-        @Query('limit') limit?: string,
-        @Query('offset') offset?: string,
-        @Query('sort') sort?: string,
-        @Request() req?,
-    ) {
-        let userId: string | undefined;
-        // Try to get user ID if token present
-        try {
-            if (req.headers.authorization) {
-                const token = req.headers.authorization.split(' ')[1];
-                const decoded = this.jwtService.decode(token) as any;
-                userId = decoded?.id;
-            }
-        } catch (e) { }
-
-        return this.communityService.getForumPosts({
-            category,
-            tag,
-            limit: limit ? parseInt(limit, 10) : 20,
-            offset: offset ? parseInt(offset, 10) : 0,
-            sort
-        }, userId);
-    }
-
-    /**
-     * Compatibility: GET /community/posts (alias for /community/forum)
-     */
-    @Get('posts')
-    async getPostsAlias(
-        @Query('topic') topic?: string,
-        @Query('page') page?: string,
-        @Request() req?,
-    ) {
-        // Map topic/page to category/offset
-        const category = topic;
-        const offset = page ? (parseInt(page, 10) - 1) * 20 : 0;
-        let userId: string | undefined;
-        try {
-            if (req?.headers?.authorization) {
-                const token = req.headers.authorization.split(' ')[1];
-                const decoded = this.jwtService.decode(token) as any;
-                userId = decoded?.id;
-            }
-        } catch (e) { }
-
-        return this.communityService.getForumPosts({ category, limit: 20, offset }, userId);
     }
 
     /**
