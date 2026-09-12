@@ -1752,6 +1752,101 @@ export class EmailService {
     }
   }
 
+  async sendLaunchAlertConfirmation(email: string, serviceTitle: string, userName?: string) {
+    const name = userName && userName.trim() ? userName.trim() : 'Valued Student';
+    const year = new Date().getFullYear();
+    const serviceName = serviceTitle || 'Essential Student Services';
+
+    const mailOptions = {
+      from: process.env.EMAIL_FROM || '"VidyaLoans VIP Alerts" <noreply@vidyaloans.in>',
+      to: email,
+      subject: `🎉 VIP Launch Alert Confirmed: ${serviceName} on VidyaLoans`,
+      html: `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>${serviceName} Launch Alert</title>
+        </head>
+        <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f1f5f9; color: #1e293b;">
+          <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f1f5f9; padding: 30px 15px;">
+            <tr>
+              <td align="center">
+                <table width="600" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border-radius: 20px; overflow: hidden; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.05), 0 8px 10px -6px rgba(0,0,0,0.01); max-width: 600px; width: 100%;">
+                  <!-- Header -->
+                  <tr>
+                    <td style="background: linear-gradient(135deg, #1A0A5E 0%, #311B92 50%, #4527A0 100%); padding: 40px 30px; text-align: center;">
+                      <div style="background: rgba(255, 255, 255, 0.15); width: 64px; height: 64px; border-radius: 50%; margin: 0 auto 16px; line-height: 64px; font-size: 32px;">
+                        🔔
+                      </div>
+                      <h1 style="color: #ffffff; margin: 0; font-size: 26px; font-weight: 800; letter-spacing: -0.5px;">You're on the VIP List!</h1>
+                      <p style="color: #e0e7ff; margin: 8px 0 0; font-size: 15px; font-weight: 500;">Early Access Confirmed for <strong>${serviceName}</strong></p>
+                    </td>
+                  </tr>
+                  <!-- Content -->
+                  <tr>
+                    <td style="padding: 36px 30px;">
+                      <p style="font-size: 16px; line-height: 1.6; color: #334155; margin: 0 0 16px;">Hello <strong>${name}</strong>,</p>
+                      <p style="font-size: 15px; line-height: 1.6; color: #475569; margin: 0 0 24px;">
+                        Great news! Your request to be notified when <strong>${serviceName}</strong> officially launches has been successfully recorded for <strong>${email}</strong>.
+                      </p>
+
+                      <!-- Highlight Box -->
+                      <div style="background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%); border: 1.5px solid #a7f3d0; border-radius: 16px; padding: 22px 20px; margin: 0 0 28px;">
+                        <h3 style="margin: 0 0 10px; color: #065f46; font-size: 16px; font-weight: 700;">
+                          ✨ VIP Member Benefits
+                        </h3>
+                        <ul style="margin: 0; padding-left: 20px; color: #047857; font-size: 14px; line-height: 1.7;">
+                          <li><strong>Priority Access:</strong> Instant notification the minute ${serviceName} goes live.</li>
+                          <li><strong>Exclusive Early-Bird Perks:</strong> Zero processing fees & specialized student discounts.</li>
+                          <li><strong>Direct Support:</strong> Dedicated assistance from VidyaLoans education finance specialists.</li>
+                        </ul>
+                      </div>
+
+                      <p style="font-size: 14.5px; line-height: 1.6; color: #64748b; margin: 0 0 28px;">
+                        In the meantime, explore our loan eligibility calculator, compare global university programs, or chat with mentors directly inside the VidyaLoans app!
+                      </p>
+
+                      <!-- CTA Button -->
+                      <div style="text-align: center; margin: 0 0 10px;">
+                        <a href="https://vidyaloans.in" style="background: linear-gradient(135deg, #10B981 0%, #059669 100%); color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 12px; font-weight: 700; font-size: 15px; display: inline-block; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);">
+                          Open VidyaLoans App
+                        </a>
+                      </div>
+                    </td>
+                  </tr>
+                  <!-- Footer -->
+                  <tr>
+                    <td style="background-color: #f8fafc; border-top: 1px solid #e2e8f0; padding: 24px 30px; text-align: center;">
+                      <p style="margin: 0 0 6px; font-size: 13px; font-weight: 600; color: #64748b;">VidyaLoans — Empowering Higher Education Dreams</p>
+                      <p style="margin: 0; font-size: 11.5px; color: #94a3b8;">&copy; ${year} VidyaLoans. All rights reserved.</p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </body>
+        </html>
+      `,
+    };
+
+    try {
+      console.log(`[EmailService] Sending VIP Launch Alert email to: ${email} for ${serviceName}`);
+      if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+        await this.transporter.sendMail(mailOptions);
+        console.log(`[EmailService] Launch Alert email sent successfully to ${email}`);
+      } else {
+        console.log(`[EmailService] SMTP credentials not set; email prepared for ${email}`);
+      }
+      return { success: true, message: 'Email sent successfully' };
+    } catch (error) {
+      console.error('[EmailService] Error sending Launch Alert email:', error);
+      return { success: false, error: (error as Error).message };
+    }
+  }
+
   async sendApplicationRejectedByStaffEmail(email: string, userName: string, reason: string) {
     return this.sendApplicationRejectedByBankEmail(email, userName, 'VidyaLoan Review Team', reason);
   }

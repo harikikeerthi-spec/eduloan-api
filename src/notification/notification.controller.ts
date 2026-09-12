@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Put,
+  Delete,
   Body,
   Param,
   Query,
@@ -51,10 +52,31 @@ export class NotificationController {
     return this.markRead(id, req);
   }
 
+  @Delete('clear-all')
+  @HttpCode(HttpStatus.OK)
+  async clearAllNotifications(@Req() req: any) {
+    const result = await this.notificationService.markAllAsRead(req.user || {});
+    return result;
+  }
+
+  @Delete(':id')
+  @HttpCode(HttpStatus.OK)
+  async deleteNotification(@Param('id') id: string, @Req() req: any) {
+    const data = await this.notificationService.markAsRead(id, req.user || {});
+    return { success: true, data };
+  }
+
   @Put('mark-all-read')
   @HttpCode(HttpStatus.OK)
   async markAllRead(@Req() req: any) {
     const result = await this.notificationService.markAllAsRead(req.user);
+    return result;
+  }
+
+  @Post('read-all')
+  @HttpCode(HttpStatus.OK)
+  async readAllPost(@Req() req: any) {
+    const result = await this.notificationService.markAllAsRead(req.user || {});
     return result;
   }
 
@@ -81,5 +103,23 @@ export class NotificationController {
       body.metadata,
     );
     return { success: true, data: result };
+  }
+
+  @Post('launch-alert')
+  async subscribeLaunchAlert(@Body() body: any, @Req() req: any) {
+    const email = (body.email || '').trim();
+    const serviceKey = body.serviceKey || 'essential_service';
+    const serviceTitle = body.serviceTitle || 'Student Service';
+    const userId = body.userId || req?.user?.id || 'guest';
+    const userName = body.userName || req?.user?.firstName || 'Student';
+
+    const result = await this.notificationService.registerLaunchAlert({
+      email,
+      serviceKey,
+      serviceTitle,
+      userId,
+      userName,
+    });
+    return { success: true, ...result };
   }
 }

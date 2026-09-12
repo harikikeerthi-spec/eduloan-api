@@ -66,6 +66,58 @@ export class NotificationService {
     return payload;
   }
 
+  /**
+   * Register a user for a VIP service launch alert, store preference, and dispatch confirmation email.
+   */
+  async registerLaunchAlert(data: {
+    email: string;
+    serviceKey: string;
+    serviceTitle: string;
+    userId?: string;
+    userName?: string;
+  }) {
+    const { email, serviceKey, serviceTitle, userId = 'guest', userName } = data;
+
+    // 1. Save subscription in database (fire-and-forget fallback)
+    try {
+      await this.db.from('LaunchSubscription').insert({
+        email,
+        serviceKey,
+        serviceTitle,
+        userId,
+        createdAt: new Date().toISOString(),
+      });
+    } catch (dbError) {
+      this.logger.warn(`Failed to insert into LaunchSubscription table: ${(dbError as Error).message}`);
+    }
+
+    // 2. Create in-app notification if userId is provided
+    if (userId && userId !== 'guest') {
+      try {
+        await this.createNotification(
+          userId,
+          `🎁 ${serviceTitle} VIP Launch List Confirmed!`,
+          `We will email ${email} as soon as ${serviceTitle} launches on VidyaLoans!`,
+          'ALERT',
+          { serviceKey, email },
+        );
+      } catch (_) {}
+    }
+
+    // 3. Dispatch confirmation Email directly to the user's email address
+    try {
+      await this.emailService.sendLaunchAlertConfirmation(email, serviceTitle, userName);
+    } catch (emailErr) {
+      this.logger.error(`Error dispatching Launch Alert email to ${email}: ${(emailErr as Error).message}`);
+    }
+
+    return {
+      message: `VIP reservation confirmed for ${serviceTitle}. Confirmation email dispatched to ${email}.`,
+      email,
+      serviceTitle,
+    };
+  }
+
   private async sendFcmPushNotification(
     userId: string,
     title: string,

@@ -3,6 +3,7 @@ import {
     Get,
     Post,
     Put,
+    Patch,
     Delete,
     Body,
     Param,
@@ -1013,8 +1014,20 @@ export class CommunityController {
      * Get all 1-on-1 direct conversations for user
      */
     @Get('direct-chats')
-    async getDirectConversations(@Query('userId') userId: string) {
-        return this.communityService.getDirectConversations(userId || 'user_me');
+    async getDirectConversations(
+        @Query('userId') userId: string,
+        @Query('email') email?: string,
+        @Request() req?: any,
+    ) {
+        let userEmail = email;
+        try {
+            if (req?.headers?.authorization) {
+                const token = req.headers.authorization.split(' ')[1];
+                const decoded = this.jwtService.decode(token) as any;
+                if (decoded?.email && !userEmail) userEmail = decoded.email;
+            }
+        } catch (_) {}
+        return this.communityService.getDirectConversations(userId || 'user_me', userEmail);
     }
 
     /**
@@ -1025,8 +1038,18 @@ export class CommunityController {
     async getDirectMessages(
         @Param('conversationId') conversationId: string,
         @Query('userId') userId?: string,
+        @Query('email') email?: string,
+        @Request() req?: any,
     ) {
-        return this.communityService.getDirectMessages(conversationId, userId);
+        let userEmail = email;
+        try {
+            if (req?.headers?.authorization) {
+                const token = req.headers.authorization.split(' ')[1];
+                const decoded = this.jwtService.decode(token) as any;
+                if (decoded?.email && !userEmail) userEmail = decoded.email;
+            }
+        } catch (_) {}
+        return this.communityService.getDirectMessages(conversationId, userId, userEmail);
     }
 
     /**
@@ -1035,8 +1058,19 @@ export class CommunityController {
      */
     @Post('direct-chats/send')
     async sendDirectMessage(@Request() req, @Body() body: any) {
-        const senderId = req.user?.id || body.senderId || 'user_me';
-        return this.communityService.sendDirectMessage(senderId, body);
+        let senderEmail = body?.senderEmail;
+        try {
+            if (req?.headers?.authorization) {
+                const token = req.headers.authorization.split(' ')[1];
+                const decoded = this.jwtService.decode(token) as any;
+                if (decoded?.email && !senderEmail) senderEmail = decoded.email;
+            }
+        } catch (_) {}
+        const senderId = req.user?.id || body.senderId || senderEmail || 'user_me';
+        return this.communityService.sendDirectMessage(senderId, {
+            ...body,
+            senderEmail: senderEmail || body?.senderEmail,
+        });
     }
 
     /**
@@ -1050,7 +1084,7 @@ export class CommunityController {
     ) {
         return this.communityService.markDirectConversationRead(
             conversationId,
-            body?.userId || 'user_me',
+            body?.userId || body?.email || 'user_me',
         );
     }
 
@@ -1104,6 +1138,34 @@ export class CommunityController {
         return this.communityService.approveGroupJoinRequest(groupId, body?.requestId);
     }
 
+    @Put('groups/:groupId')
+    async updateSmartGroup(
+        @Param('groupId') groupId: string,
+        @Body() body: any,
+        @Request() req: any,
+    ) {
+        let userEmail = body?.email || body?.adminEmail;
+        let userRole = '';
+        try {
+            if (req?.headers?.authorization) {
+                const token = req.headers.authorization.split(' ')[1];
+                const decoded = this.jwtService.decode(token) as any;
+                if (decoded?.email) userEmail = decoded.email;
+                if (decoded?.role) userRole = decoded.role;
+            }
+        } catch (_) {}
+        return this.communityService.updateSmartGroup(groupId, body, userEmail, userRole);
+    }
+
+    @Patch('groups/:groupId')
+    async patchSmartGroup(
+        @Param('groupId') groupId: string,
+        @Body() body: any,
+        @Request() req: any,
+    ) {
+        return this.updateSmartGroup(groupId, body, req);
+    }
+
     @Delete('groups/:groupId')
     async deleteSmartGroup(
         @Param('groupId') groupId: string,
@@ -1124,6 +1186,24 @@ export class CommunityController {
         } catch (_) {}
 
         return this.communityService.deleteSmartGroup(groupId, userEmail, userRole);
+    }
+
+    @Put('groups/:groupId/messages/:messageId')
+    async editGroupMessage(
+        @Param('groupId') groupId: string,
+        @Param('messageId') messageId: string,
+        @Body() body: any,
+    ) {
+        return this.communityService.editGroupMessage(groupId, messageId, body?.text || '', body?.sender);
+    }
+
+    @Patch('groups/:groupId/messages/:messageId')
+    async patchGroupMessage(
+        @Param('groupId') groupId: string,
+        @Param('messageId') messageId: string,
+        @Body() body: any,
+    ) {
+        return this.communityService.editGroupMessage(groupId, messageId, body?.text || '', body?.sender);
     }
 
     @Delete('groups/:groupId/messages/:messageId')
@@ -1154,6 +1234,26 @@ export class CommunityController {
     ) {
         const userId = req?.user?.id;
         return this.communityService.submitPollVote(id, body?.optionIndex ?? 0, userId);
+    }
+
+    @Delete('polls/:id')
+    async deletePoll(
+        @Param('id') id: string,
+        @Request() req: any,
+        @Query('email') emailQuery?: string,
+        @Body() body?: any,
+    ) {
+        let userEmail = emailQuery || body?.email || body?.authorEmail;
+        let userRole = '';
+        try {
+            if (req?.headers?.authorization) {
+                const token = req.headers.authorization.split(' ')[1];
+                const decoded = this.jwtService.decode(token) as any;
+                if (decoded?.email) userEmail = decoded.email;
+                if (decoded?.role) userRole = decoded.role;
+            }
+        } catch (_) {}
+        return this.communityService.deletePoll(id, userEmail, userRole);
     }
 }
 

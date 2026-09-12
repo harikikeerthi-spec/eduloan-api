@@ -560,28 +560,56 @@ export class CommunityService {
   }
 
   async getHubs() {
-    let totalUsers = 0;
     let totalPosts = 0;
     const categoryPostCounts: Record<string, number> = {};
+    const categoryUserSets: Record<string, Set<string>> = {};
+    const allCommunityUsers = new Set<string>();
 
     try {
-      const { count: uCount } = await this.db.from('User').select('*', { count: 'exact', head: true });
-      totalUsers = uCount || 0;
+      const { data: users } = await this.db.from('User').select('id');
+      if (users && users.length) {
+        for (const u of users) {
+          if (u.id) allCommunityUsers.add(u.id);
+        }
+      }
     } catch (_) {}
 
     try {
       const { data: posts } = await this.db
         .from('ForumPost')
-        .select('category');
-      
-      if (posts) {
+        .select('category, authorId, authorName');
+
+      if (posts && posts.length) {
         totalPosts = posts.length;
         for (const p of posts) {
           const cat = (p.category || 'General').trim();
           categoryPostCounts[cat] = (categoryPostCounts[cat] || 0) + 1;
+          const userKey = p.authorId || p.authorName;
+          if (userKey) {
+            allCommunityUsers.add(userKey);
+            if (!categoryUserSets[cat]) categoryUserSets[cat] = new Set();
+            categoryUserSets[cat].add(userKey);
+          }
         }
       }
     } catch (_) {}
+
+    try {
+      const { data: comments } = await this.db
+        .from('ForumComment')
+        .select('authorId, authorName, postId');
+
+      if (comments && comments.length) {
+        for (const c of comments) {
+          const userKey = c.authorId || c.authorName;
+          if (userKey) {
+            allCommunityUsers.add(userKey);
+          }
+        }
+      }
+    } catch (_) {}
+
+    const totalCommunityMembers = Math.max(1, allCommunityUsers.size);
 
     const baseHubs = [
       {
@@ -648,13 +676,16 @@ export class CommunityService {
 
     const hubs = baseHubs.map(h => {
       const isGeneral = h.id === 'General';
-      const catCount = categoryPostCounts[h.id] || (isGeneral ? totalPosts : 0);
-      const memberCount = Math.max(totalUsers, isGeneral ? Math.max(totalUsers, totalPosts > 0 ? totalPosts + 1 : 1) : Math.max(1, catCount));
+      const catPosts = categoryPostCounts[h.id] || 0;
+      const catUsers = categoryUserSets[h.id]?.size || 0;
+      const memberCount = isGeneral
+        ? totalCommunityMembers
+        : Math.max(1, catUsers > 0 ? catUsers : Math.min(totalCommunityMembers, catPosts > 0 ? catPosts + 1 : 1));
       return {
         ...h,
         stats: {
           members: memberCount,
-          discussions: isGeneral ? totalPosts : catCount
+          discussions: isGeneral ? totalPosts : catPosts
         }
       };
     });
@@ -1075,33 +1106,62 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
     return text.replace(phoneRegex, 'XXXXXXXXXX');
   }
 
-  private normalizeUserKey(id: string): string {
+  private normalizeUserKey(id?: string): string {
     if (!id) return '';
-    return id.toLowerCase().trim().replace(/^(peer_|user_)/, '');
+    return id.toLowerCase().trim().replace(/^(peer_|user_)/, '').replace(/[^a-z0-9]/g, '_');
   }
 
   private isSameUser(id1?: string, id2?: string): boolean {
     if (!id1 || !id2) return false;
     if (id1 === id2) return true;
-    return this.normalizeUserKey(id1) === this.normalizeUserKey(id2);
+    const n1 = this.normalizeUserKey(id1);
+    const n2 = this.normalizeUserKey(id2);
+    if (n1 === n2 && n1.length > 0) return true;
+    if (n1.length > 3 && n2.length > 3) {
+      if (n1.includes(n2) || n2.includes(n1)) return true;
+    }
+    return false;
   }
 
   // Shared global in-memory persistence for real-time 1-on-1 Direct Chats
   private static inMemoryDirectConversations: Map<string, any> = new Map();
   private static inMemoryDirectMessages: Map<string, any[]> = new Map();
 
-  async getDirectConversations(userId: string) {
+  async getDirectConversations(userId: string, userEmail?: string) {
     const normUser = this.normalizeUserKey(userId);
-    const memConvs = Array.from(CommunityService.inMemoryDirectConversations.values()).filter(
-      (c: any) => !userId || userId === 'user_me' || this.isSameUser(c.participant1Id, normUser) || this.isSameUser(c.participant2Id, normUser) || this.isSameUser(c.senderId, normUser) || this.isSameUser(c.peerId, normUser)
-    );
+    const normEmail = this.normalizeUserKey(userEmail);
+    const userKeys = [userId, userEmail, normUser, normEmail].filter((k): k is string => Boolean(k && k.length > 0));
+
+    const matchesUser = (c: any) => {
+      if (!userId || userId === 'user_me') return true;
+      return userKeys.some(k =>
+        this.isSameUser(c.participant1Id, k) ||
+        this.isSameUser(c.participant1Email, k) ||
+        this.isSameUser(c.participant2Id, k) ||
+        this.isSameUser(c.participant2Email, k) ||
+        this.isSameUser(c.senderId, k) ||
+        this.isSameUser(c.peerId, k) ||
+        this.isSameUser(c.lastSenderId, k)
+      );
+    };
+
+    const memConvs = Array.from(CommunityService.inMemoryDirectConversations.values()).filter(matchesUser);
 
     try {
-      const { data: dbConvs } = await this.db
-        .from('DirectConversation')
-        .select('*')
-        .or(`participant1Id.ilike.%${normUser}%,participant2Id.ilike.%${normUser}%`)
-        .order('lastMessageAt', { ascending: false });
+      let query = this.db.from('DirectConversation').select('*');
+      if (normUser || normEmail) {
+        const orConditions: string[] = [];
+        if (normUser) {
+          orConditions.push(`participant1Id.ilike.%${normUser}%`, `participant2Id.ilike.%${normUser}%`);
+        }
+        if (normEmail) {
+          orConditions.push(`participant1Email.ilike.%${normEmail}%`, `participant2Email.ilike.%${normEmail}%`);
+        }
+        if (orConditions.length > 0) {
+          query = query.or(orConditions.join(','));
+        }
+      }
+      const { data: dbConvs } = await query.order('lastMessageAt', { ascending: false });
 
       const convMap = new Map<string, any>();
       if (dbConvs && dbConvs.length > 0) {
@@ -1110,8 +1170,9 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
       memConvs.forEach((c: any) => convMap.set(c.id, c));
 
       const formatted = Array.from(convMap.values()).map((c: any) => {
-        const isUserP1 = this.isSameUser(c.participant1Id, normUser);
+        const isUserP1 = userKeys.some(k => this.isSameUser(c.participant1Id, k) || this.isSameUser(c.participant1Email, k));
         const peerId = isUserP1 ? (c.participant2Id || c.peerId) : (c.participant1Id || c.senderId);
+        const peerEmail = isUserP1 ? (c.participant2Email || c.peerEmail || '') : (c.participant1Email || c.senderEmail || '');
         const peerName = isUserP1 ? (c.participant2Name || c.peerName || 'Student Member') : (c.participant1Name || c.senderName || 'Student Member');
         const peerRole = isUserP1 ? (c.participant2Role || c.peerRole || 'Student') : (c.participant1Role || 'Student');
         const avatarLetter = isUserP1 ? (c.participant2Avatar || c.avatarLetter || (peerName ? peerName[0].toUpperCase() : 'S')) : (c.participant1Avatar || (peerName ? peerName[0].toUpperCase() : 'S'));
@@ -1120,6 +1181,7 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
         return {
           id: c.id,
           peerId: peerId || 'student_member',
+          peerEmail: peerEmail,
           peerName: peerName,
           peerRole: peerRole,
           avatarLetter: avatarLetter,
@@ -1127,7 +1189,7 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
           isOnline: true,
           lastMessage: this.maskPhoneNumbers(c.lastMessage || ''),
           lastTimestamp: c.lastMessageAt || c.lastTimestamp || new Date().toISOString(),
-          unreadCount: this.isSameUser(c.lastSenderId, normUser) ? 0 : (c.unreadCount || 0),
+          unreadCount: userKeys.some(k => this.isSameUser(c.lastSenderId, k)) ? 0 : (c.unreadCount || 0),
         };
       });
 
@@ -1136,12 +1198,14 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
     } catch (e) {
       console.error('[CommunityService] getDirectConversations fallback to memory:', e);
       const formatted = memConvs.map((c: any) => {
-        const isUserP1 = this.isSameUser(c.participant1Id, normUser);
+        const isUserP1 = userKeys.some(k => this.isSameUser(c.participant1Id, k) || this.isSameUser(c.participant1Email, k));
         const peerId = isUserP1 ? (c.participant2Id || c.peerId) : (c.participant1Id || c.senderId);
+        const peerEmail = isUserP1 ? (c.participant2Email || c.peerEmail || '') : (c.participant1Email || c.senderEmail || '');
         const peerName = isUserP1 ? (c.participant2Name || c.peerName || 'Student Member') : (c.participant1Name || c.senderName || 'Student Member');
         return {
           id: c.id,
           peerId: peerId || 'student_member',
+          peerEmail: peerEmail,
           peerName: peerName,
           peerRole: isUserP1 ? (c.participant2Role || 'Student') : (c.participant1Role || 'Student'),
           avatarLetter: isUserP1 ? (c.participant2Avatar || (peerName ? peerName[0].toUpperCase() : 'S')) : (c.participant1Avatar || (peerName ? peerName[0].toUpperCase() : 'S')),
@@ -1149,7 +1213,7 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
           isOnline: true,
           lastMessage: this.maskPhoneNumbers(c.lastMessage || ''),
           lastTimestamp: c.lastMessageAt || c.lastTimestamp || new Date().toISOString(),
-          unreadCount: this.isSameUser(c.lastSenderId, normUser) ? 0 : (c.unreadCount || 0),
+          unreadCount: userKeys.some(k => this.isSameUser(c.lastSenderId, k)) ? 0 : (c.unreadCount || 0),
         };
       });
       formatted.sort((a, b) => new Date(b.lastTimestamp || 0).getTime() - new Date(a.lastTimestamp || 0).getTime());
@@ -1157,45 +1221,51 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
     }
   }
 
-  async getDirectMessages(conversationId: string, userId?: string) {
-    let convKey = conversationId;
-    if (!CommunityService.inMemoryDirectMessages.has(convKey)) {
-      const parts = conversationId.replace(/^conv_/, '').split('_');
-      if (parts.length >= 2) {
-        const p1 = this.normalizeUserKey(parts[0]);
-        const p2 = this.normalizeUserKey(parts.slice(1).join('_'));
-        const normKey1 = `conv_${p1 < p2 ? p1 : p2}_${p1 < p2 ? p2 : p1}`;
-        if (CommunityService.inMemoryDirectMessages.has(normKey1)) {
-          convKey = normKey1;
+  async getDirectMessages(conversationId: string, userId?: string, userEmail?: string) {
+    const normUser = this.normalizeUserKey(userId);
+    const normEmail = this.normalizeUserKey(userEmail);
+    const userKeys = [userId, userEmail, normUser, normEmail].filter((k): k is string => Boolean(k && k.length > 0));
+
+    // Collect in-memory messages from this conversationId and any matching alias keys
+    const memMsgsList: any[] = [];
+    CommunityService.inMemoryDirectMessages.forEach((msgs, cId) => {
+      if (cId === conversationId) {
+        memMsgsList.push(...msgs);
+      } else {
+        const clean1 = conversationId.replace(/^conv_/, '');
+        const clean2 = cId.replace(/^conv_/, '');
+        if (clean1 === clean2) {
+          memMsgsList.push(...msgs);
         }
       }
-    }
-
-    const memMsgs = CommunityService.inMemoryDirectMessages.get(convKey) || [];
-    const normUser = userId ? this.normalizeUserKey(userId) : '';
+    });
 
     try {
       const { data: dbMsgs } = await this.db
         .from('DirectMessage')
         .select('*')
-        .or(`conversationId.eq.${conversationId},conversationId.eq.${convKey}`)
+        .eq('conversationId', conversationId)
         .order('createdAt', { ascending: true });
 
       const msgMap = new Map<string, any>();
       if (dbMsgs && dbMsgs.length > 0) {
         dbMsgs.forEach((m: any) => msgMap.set(m.id || `${m.senderId}_${m.content}_${m.createdAt}`, m));
       }
-      memMsgs.forEach((m: any) => msgMap.set(m.id || `${m.senderId}_${m.content || m.text}_${m.createdAt || m.timestamp}`, m));
+      memMsgsList.forEach((m: any) => msgMap.set(m.id || `${m.senderId}_${m.content || m.text}_${m.createdAt || m.timestamp}`, m));
 
       const formatted = Array.from(msgMap.values()).map((m: any) => {
         const rawContent = m.content || m.text || '';
-        const isMe = normUser ? this.isSameUser(m.senderId, normUser) : false;
+        const isMe = userKeys.length > 0
+          ? userKeys.some(k => this.isSameUser(m.senderId, k) || this.isSameUser(m.senderEmail, k))
+          : false;
         return {
           id: m.id,
           conversationId: m.conversationId,
           senderId: m.senderId,
+          senderEmail: m.senderEmail,
           senderName: m.senderName || 'Student',
           recipientId: m.recipientId,
+          recipientEmail: m.recipientEmail,
           text: this.maskPhoneNumbers(rawContent),
           content: this.maskPhoneNumbers(rawContent),
           isRead: m.isRead ?? true,
@@ -1209,9 +1279,11 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
       return { success: true, data: formatted };
     } catch (e) {
       console.error('[CommunityService] getDirectMessages fallback to memory:', e);
-      const formatted = memMsgs.map((m: any) => {
+      const formatted = memMsgsList.map((m: any) => {
         const rawContent = m.content || m.text || '';
-        const isMe = normUser ? this.isSameUser(m.senderId, normUser) : false;
+        const isMe = userKeys.length > 0
+          ? userKeys.some(k => this.isSameUser(m.senderId, k) || this.isSameUser(m.senderEmail, k))
+          : false;
         return {
           ...m,
           text: this.maskPhoneNumbers(rawContent),
@@ -1224,12 +1296,12 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
     }
   }
 
-  async sendDirectMessage(senderId: string, data: { id?: string; peerId: string; peerName?: string; peerRole?: string; avatarLetter?: string; colorValue?: number; senderName?: string; text: string }) {
-    const normSender = this.normalizeUserKey(senderId);
-    const normPeer = this.normalizeUserKey(data.peerId);
+  async sendDirectMessage(senderId: string, data: { id?: string; senderEmail?: string; senderName?: string; peerId: string; peerEmail?: string; peerName?: string; peerRole?: string; avatarLetter?: string; colorValue?: number; text: string }) {
+    const normSender = this.normalizeUserKey(data.senderEmail || senderId);
+    const normPeer = this.normalizeUserKey(data.peerEmail || data.peerId);
     const p1 = normSender < normPeer ? normSender : normPeer;
     const p2 = normSender < normPeer ? normPeer : normSender;
-    const conversationId = `conv_${p1}_${p2}`;
+    const conversationId = `conv_${p1}__${p2}`;
     const now = new Date().toISOString();
     const maskedText = this.maskPhoneNumbers(data.text);
     const messageId = data.id || `dmsg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
@@ -1238,8 +1310,10 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
       id: messageId,
       conversationId,
       senderId,
+      senderEmail: data.senderEmail || '',
       senderName: data.senderName || 'Student',
       recipientId: data.peerId,
+      recipientEmail: data.peerEmail || '',
       peerName: data.peerName || 'Student Member',
       peerRole: data.peerRole || 'Student',
       avatarLetter: data.avatarLetter || (data.peerName ? data.peerName[0].toUpperCase() : 'S'),
@@ -1251,7 +1325,7 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
       createdAt: now,
     };
 
-    // 1. Store in shared in-memory message list (deduplicating by ID)
+    // 1. Store in shared in-memory message list
     if (!CommunityService.inMemoryDirectMessages.has(conversationId)) {
       CommunityService.inMemoryDirectMessages.set(conversationId, []);
     }
@@ -1263,63 +1337,93 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
       msgs.push(newMsg);
     }
 
-    // 2. Store participants' metadata on conversation
+    // 2. Store conversation record
     const convObj = {
       id: conversationId,
       participant1Id: p1,
+      participant1Email: p1 === normSender ? (data.senderEmail || '') : (data.peerEmail || ''),
       participant1Name: p1 === normSender ? (data.senderName || 'Student') : (data.peerName || 'Student'),
       participant1Role: p1 === normSender ? 'Student' : (data.peerRole || 'Student'),
       participant1Avatar: p1 === normSender ? (data.senderName ? data.senderName[0].toUpperCase() : 'S') : (data.avatarLetter || (data.peerName ? data.peerName[0].toUpperCase() : 'S')),
       participant1Color: p1 === normSender ? 3218322 : (data.colorValue || 3218322),
 
       participant2Id: p2,
+      participant2Email: p2 === normSender ? (data.senderEmail || '') : (data.peerEmail || ''),
       participant2Name: p2 === normSender ? (data.senderName || 'Student') : (data.peerName || 'Student'),
       participant2Role: p2 === normSender ? 'Student' : (data.peerRole || 'Student'),
       participant2Avatar: p2 === normSender ? (data.senderName ? data.senderName[0].toUpperCase() : 'S') : (data.avatarLetter || (data.peerName ? data.peerName[0].toUpperCase() : 'S')),
       participant2Color: p2 === normSender ? 3218322 : (data.colorValue || 3218322),
 
       lastSenderId: senderId,
+      lastSenderEmail: data.senderEmail || '',
+      lastSenderName: data.senderName || 'Student',
       lastMessage: maskedText,
       lastMessageAt: now,
       unreadCount: 1,
     };
     CommunityService.inMemoryDirectConversations.set(conversationId, convObj);
 
-    // 3. Try to persist to database
+    // 3. Persist to Supabase Database
     try {
-      const { data: existingConv } = await this.db
-        .from('DirectConversation')
-        .select('id')
-        .eq('id', conversationId)
-        .maybeSingle();
-
-      if (!existingConv) {
-        await this.db.from('DirectConversation').insert(convObj);
-      } else {
-        await this.db
-          .from('DirectConversation')
-          .update({
-            lastMessage: data.text,
-            lastMessageAt: now,
-            unreadCount: 1,
-          })
-          .eq('id', conversationId);
-      }
-
-      await this.db
-        .from('DirectMessage')
-        .upsert({
-          id: messageId,
-          conversationId,
-          senderId,
-          recipientId: data.peerId,
-          content: data.text,
-          isRead: false,
-          createdAt: now,
-        });
+      await this.db.from('DirectConversation').upsert([convObj], { onConflict: 'id' });
+      await this.db.from('DirectMessage').upsert([newMsg], { onConflict: 'id' });
     } catch (e) {
       console.warn('Fallback sendDirectMessage in-memory save:', e);
     }
+
+    // 4. In-App Notification for Recipient
+    try {
+      const notifId = `notif-dm-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      const notifTitle = `💬 New message from ${data.senderName || 'Student'}`;
+      const notifBody = maskedText;
+
+      await this.db.from('Notification').insert([{
+        id: notifId,
+        userId: data.peerId,
+        title: notifTitle,
+        body: notifBody,
+        type: 'DIRECT_CHAT',
+        isRead: false,
+        timestamp: now,
+        metadata: {
+          peerId: senderId,
+          peerName: data.senderName || 'Student',
+          route: '/direct-chats',
+        },
+      }]);
+    } catch (_) {}
+
+    // 5. Mobile FCM Push Notification to Recipient
+    try {
+      const admin = require('firebase-admin');
+      if (admin.apps && admin.apps.length > 0) {
+        const notifTitle = `💬 ${data.senderName || 'Student'}`;
+        const notifBody = maskedText;
+
+        const recipientIdentifier = data.peerEmail || data.peerId;
+        const { data: recipientUser } = await this.db
+          .from('User')
+          .select('fcmToken')
+          .or(`id.eq.${data.peerId},email.ilike.%${recipientIdentifier}%`)
+          .maybeSingle();
+
+        if (recipientUser?.fcmToken) {
+          await admin.messaging().send({
+            token: recipientUser.fcmToken,
+            notification: {
+              title: notifTitle,
+              body: notifBody,
+            },
+            data: {
+              type: 'DIRECT_CHAT',
+              peerId: senderId,
+              peerName: data.senderName || 'Student',
+              click_action: 'FLUTTER_NOTIFICATION_CLICK',
+            },
+          });
+        }
+      }
+    } catch (_) {}
 
     return {
       success: true,
@@ -1354,56 +1458,7 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
 
   // ==================== LIVE COMMUNITY POLLS API ====================
 
-  private static inMemoryPolls: Map<string, any> = new Map([
-    [
-      'poll_active_1',
-      {
-        id: 'poll_active_1',
-        question: 'Which country are you targeting for Fall 2026 / Spring 2027?',
-        author: 'VidyaLoan Community',
-        totalVotes: 348,
-        createdAt: new Date(Date.now() - 12 * 3600 * 1000).toISOString(),
-        options: [
-          { text: '🇺🇸 USA', votes: 215 },
-          { text: '🇬🇧 UK & Ireland', votes: 62 },
-          { text: '🇩🇪 Germany & Europe', votes: 45 },
-          { text: '🇨🇦 Canada & Australia', votes: 26 },
-        ],
-      },
-    ],
-    [
-      'poll_active_2',
-      {
-        id: 'poll_active_2',
-        question: 'What is your biggest blocker in the education loan process?',
-        author: 'Finance Advisory',
-        totalVotes: 210,
-        createdAt: new Date(Date.now() - 18 * 3600 * 1000).toISOString(),
-        options: [
-          { text: '📄 Co-applicant income proof', votes: 98 },
-          { text: '⏳ Bank sanction speed', votes: 64 },
-          { text: '🏡 Collateral valuation', votes: 32 },
-          { text: '🔣 Interest rate comparison', votes: 16 },
-        ],
-      },
-    ],
-    [
-      'poll_active_3',
-      {
-        id: 'poll_active_3',
-        question: 'Which lending partner do you prefer for education loans?',
-        author: 'Global Admissions Team',
-        totalVotes: 285,
-        createdAt: new Date(Date.now() - 24 * 3600 * 1000).toISOString(),
-        options: [
-          { text: 'Auxilo', votes: 110 },
-          { text: 'Avanse Financial', votes: 75 },
-          { text: 'IDFC FIRST Bank', votes: 60 },
-          { text: 'HDFC Credila', votes: 40 },
-        ],
-      },
-    ],
-  ]);
+  private static inMemoryPolls: Map<string, any> = new Map();
 
   async getPolls() {
     try {
@@ -1414,21 +1469,32 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
 
       if (dbPolls && dbPolls.length > 0) {
         dbPolls.forEach((p: any) => {
-          if (p.id) CommunityService.inMemoryPolls.set(p.id, p);
+          if (p.id && !this.isStaticPoll(p)) {
+            CommunityService.inMemoryPolls.set(p.id, p);
+          }
         });
       }
     } catch (_) {}
 
-    const allPolls = Array.from(CommunityService.inMemoryPolls.values());
+    const allPolls = Array.from(CommunityService.inMemoryPolls.values())
+      .filter((p: any) => !this.isStaticPoll(p));
     allPolls.sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
     return { success: true, data: allPolls };
   }
 
-  async createPoll(data: { question: string; options: any[]; author?: string }) {
+  private isStaticPoll(p: any): boolean {
+    const id = p?.id?.toString() || '';
+    return id.startsWith('poll_active_') || id === 'poll_1' || id === 'poll_2' || id === 'poll_3';
+  }
+
+  async createPoll(data: { question: string; options: any[]; author?: string; authorEmail?: string; createdBy?: string }) {
     const id = `poll_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const now = new Date().toISOString();
 
-    const formattedOptions = (data.options || []).map((opt: any) => {
+    // Enforce maximum 5 options
+    const max5Options = (data.options || []).slice(0, 5);
+
+    const formattedOptions = max5Options.map((opt: any) => {
       if (typeof opt === 'string') return { text: opt.trim(), votes: 0 };
       if (typeof opt === 'object' && opt.text) return { text: String(opt.text).trim(), votes: opt.votes || 0 };
       return { text: String(opt), votes: 0 };
@@ -1438,6 +1504,8 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
       id,
       question: data.question || 'Student Poll',
       author: data.author || 'Student Poll',
+      authorEmail: data.authorEmail || data.createdBy || '',
+      createdBy: data.createdBy || data.authorEmail || '',
       totalVotes: 0,
       createdAt: now,
       options: formattedOptions,
@@ -1451,13 +1519,12 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
       console.warn('Fallback createPoll in-memory save:', e);
     }
 
-    // ==================== BROADCAST NOTIFICATION TO EACH AND EVERY USER ====================
+    // Broadcast in-app & push notification
     try {
       const notifId = `notif-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
       const notifTitle = '📊 New Community Poll Published!';
       const notifBody = `${newPoll.author} posted: "${newPoll.question}"`;
 
-      // 1. In-App Notification record for ALL users in Supabase
       const pollNotification = {
         id: notifId,
         userId: 'all',
@@ -1479,14 +1546,12 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
       console.warn('Database notification insert error on poll create:', dbNotifErr);
     }
 
-    // 2. Mobile Push Notification Broadcast via Firebase Admin
     try {
       const admin = require('firebase-admin');
       if (admin.apps && admin.apps.length > 0) {
         const notifTitle = '📊 New Community Poll Published!';
         const notifBody = `${newPoll.author}: "${newPoll.question}"`;
 
-        // A. Topic broadcast to all subscribed devices
         try {
           await admin.messaging().send({
             topic: 'all_users',
@@ -1502,41 +1567,50 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
             },
           });
         } catch (_) {}
-
-        // B. Direct multicast to all active FCM tokens in database
-        try {
-          const { data: usersWithTokens } = await this.db
-            .from('User')
-            .select('fcmToken')
-            .not('fcmToken', 'is', null)
-            .limit(500);
-
-          const tokens = (usersWithTokens || [])
-            .map((u: any) => u.fcmToken)
-            .filter((t: any) => typeof t === 'string' && t.length > 10);
-
-          if (tokens.length > 0) {
-            await admin.messaging().sendEachForMulticast({
-              tokens,
-              notification: {
-                title: notifTitle,
-                body: notifBody,
-              },
-              data: {
-                type: 'POLL',
-                pollId: id,
-                title: notifTitle,
-                body: newPoll.question,
-              },
-            });
-          }
-        } catch (_) {}
       }
     } catch (fcmErr) {
       console.warn('FCM broadcast notification error on poll create:', fcmErr);
     }
 
     return { success: true, data: newPoll };
+  }
+
+  async deletePoll(pollId: string, requesterEmail?: string, requesterRole?: string) {
+    try {
+      let existingPoll = CommunityService.inMemoryPolls.get(pollId);
+      if (!existingPoll) {
+        const { data } = await this.db
+          .from('CommunityPoll')
+          .select('*')
+          .eq('id', pollId)
+          .maybeSingle();
+        existingPoll = data;
+      }
+
+      if (existingPoll) {
+        const creatorEmail = (existingPoll.authorEmail || existingPoll.createdBy || existingPoll.author || '').toLowerCase().trim();
+        const reqEmail = (requesterEmail || '').toLowerCase().trim();
+        const isAdmin = requesterRole === 'admin' || requesterRole === 'staff';
+
+        if (!isAdmin && creatorEmail && reqEmail && creatorEmail !== reqEmail) {
+          throw new HttpException('Only the poll creator or admin can delete this poll', HttpStatus.FORBIDDEN);
+        }
+      }
+
+      CommunityService.inMemoryPolls.delete(pollId);
+
+      try {
+        await this.db.from('CommunityPoll').delete().eq('id', pollId);
+      } catch (dbErr) {
+        console.warn('DB delete poll error:', dbErr);
+      }
+
+      return { success: true, message: 'Poll deleted successfully' };
+    } catch (e) {
+      if (e instanceof HttpException) throw e;
+      console.error('[CommunityService] Exception deleting poll:', e);
+      return { success: false, message: 'Failed to delete poll' };
+    }
   }
 
   async submitPollVote(pollId: string, optionIndex: number, userId?: string) {
@@ -1586,6 +1660,15 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
   private static lastGroupsFetch = 0;
   private static lastGroupMsgFetch: Map<string, number> = new Map();
 
+  static calculateOnlineCount(totalMembers: number): number {
+    if (totalMembers <= 1) return 1;
+    if (totalMembers === 2) return 1;
+    if (totalMembers === 3) return 2;
+    if (totalMembers === 4) return 2;
+    const count = Math.round(totalMembers * 0.4);
+    return Math.max(1, Math.min(totalMembers, count));
+  }
+
   private isStaticGroup(g: any): boolean {
     if (!g) return false;
     const id = String(g.id || '').toLowerCase().trim();
@@ -1634,7 +1717,7 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
           if (!this.isStaticGroup(g)) {
             const approved = approvedCounts.get(g.id) || 0;
             const totalMembers = Math.max(1, Math.max(g.members || 1, 1 + approved));
-            const safeOnline = Math.max(1, Math.min(totalMembers, g.online || 1));
+            const safeOnline = CommunityService.calculateOnlineCount(totalMembers);
 
             CommunityService.inMemoryGroups.set(g.id, {
               ...g,
@@ -1666,12 +1749,13 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
     CommunityService.lastGroupsFetch = 0;
 
     const id = groupData.id || `group_${Date.now()}`;
+    const members = Math.max(1, groupData.members || 1);
     const newGroup = {
       id,
       title: groupData.title,
       subtitle: groupData.subtitle || 'Student discussion group',
-      members: groupData.members || 1,
-      online: groupData.online || 1,
+      members,
+      online: CommunityService.calculateOnlineCount(members),
       iconName: groupData.iconName || 'school_rounded',
       colorHex: groupData.colorHex || '#311B92',
       badge: groupData.badge || 'Custom Group',
@@ -1768,6 +1852,71 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
     }
   }
 
+  async updateSmartGroup(groupId: string, updateData: any, requesterEmail?: string, requesterRole?: string) {
+    try {
+      let existingGroup = CommunityService.inMemoryGroups.get(groupId);
+      if (!existingGroup) {
+        const { data } = await this.db
+          .from('CommunityGroup')
+          .select('*')
+          .eq('id', groupId)
+          .maybeSingle();
+        existingGroup = data;
+      }
+
+      if (existingGroup) {
+        const creatorEmail = (existingGroup.createdBy || existingGroup.adminEmail || '').toLowerCase().trim();
+        const reqEmail = (requesterEmail || '').toLowerCase().trim();
+        const isAdmin = requesterRole === 'admin' || requesterRole === 'staff';
+
+        // Enforce authorization if creatorEmail is present
+        if (!isAdmin && creatorEmail && reqEmail && creatorEmail !== reqEmail) {
+          throw new HttpException('Only the group creator or admin can update this group', HttpStatus.FORBIDDEN);
+        }
+      }
+
+      const now = new Date().toISOString();
+      const updated = {
+        ...(existingGroup || { id: groupId }),
+        ...(updateData.subtitle !== undefined ? { subtitle: updateData.subtitle } : {}),
+        ...(updateData.description !== undefined ? { subtitle: updateData.description } : {}),
+        ...(updateData.title !== undefined ? { title: updateData.title } : {}),
+        ...(updateData.badge !== undefined ? { badge: updateData.badge } : {}),
+        ...(updateData.iconName !== undefined ? { iconName: updateData.iconName } : {}),
+        ...(updateData.colorHex !== undefined ? { colorHex: updateData.colorHex } : {}),
+        updatedAt: now,
+      };
+
+      CommunityService.inMemoryGroups.set(groupId, updated);
+      CommunityService.cachedSmartGroups = null;
+      CommunityService.lastGroupsFetch = 0;
+
+      // Update in Supabase DB
+      try {
+        await this.db
+          .from('CommunityGroup')
+          .update({
+            ...(updateData.subtitle !== undefined ? { subtitle: updateData.subtitle } : {}),
+            ...(updateData.description !== undefined ? { subtitle: updateData.description } : {}),
+            ...(updateData.title !== undefined ? { title: updateData.title } : {}),
+            ...(updateData.badge !== undefined ? { badge: updateData.badge } : {}),
+            ...(updateData.iconName !== undefined ? { iconName: updateData.iconName } : {}),
+            ...(updateData.colorHex !== undefined ? { colorHex: updateData.colorHex } : {}),
+            updatedAt: now,
+          })
+          .eq('id', groupId);
+      } catch (dbErr) {
+        console.warn('[CommunityService] DB update group error:', dbErr);
+      }
+
+      return { success: true, data: updated, message: 'Group updated successfully' };
+    } catch (e) {
+      if (e instanceof HttpException) throw e;
+      console.error('[CommunityService] Exception updating group:', e);
+      return { success: false, message: 'Failed to update group' };
+    }
+  }
+
   async getGroupMessages(groupId: string) {
     const now = Date.now();
     const lastFetch = CommunityService.lastGroupMsgFetch.get(groupId) || 0;
@@ -1815,6 +1964,8 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
       id: msgData.id || `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       groupId,
       sender: msgData.sender || 'Student User',
+      senderId: msgData.senderId || msgData.userId || '',
+      senderEmail: msgData.senderEmail || msgData.email || '',
       avatarLetter: msgData.avatarLetter || (msgData.sender ? msgData.sender[0] : 'S'),
       colorHex: msgData.colorHex || '#311B92',
       role: msgData.role || 'Student',
@@ -1822,6 +1973,9 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
       time: timeStr,
       isMe: false,
       createdAt: now.toISOString(),
+      replyToId: msgData.replyToId || null,
+      replyToSender: msgData.replyToSender || null,
+      replyToText: msgData.replyToText || null,
     };
 
     // Store in shared in-memory list
@@ -1918,6 +2072,66 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
     return { success: true, message: 'Message deleted from database successfully' };
   }
 
+  async editGroupMessage(groupId: string, messageId: string, newText: string, requesterSender?: string) {
+    const rawText = newText || '';
+    const maskedText = this.maskPhoneNumbers(rawText);
+    const now = new Date().toISOString();
+
+    // 1. Update in-memory cache
+    let updatedMsg: any = null;
+    if (CommunityService.inMemoryGroupMessages.has(groupId)) {
+      const list = CommunityService.inMemoryGroupMessages.get(groupId) || [];
+      for (const m of list) {
+        if (m.id === messageId) {
+          m.text = maskedText;
+          m.isEdited = true;
+          m.updatedAt = now;
+          updatedMsg = m;
+          break;
+        }
+      }
+    }
+
+    // 2. Update Supabase table
+    try {
+      const { data, error } = await this.db
+        .from('CommunityGroupMessage')
+        .update({
+          text: maskedText,
+          isEdited: true,
+          updatedAt: now,
+        })
+        .eq('id', messageId)
+        .select()
+        .maybeSingle();
+
+      if (data) {
+        updatedMsg = { ...updatedMsg, ...data };
+      }
+      if (error) {
+        console.error('[CommunityService] DB update group message error:', error);
+      }
+    } catch (e) {
+      console.warn('[CommunityService] Exception editing group message in DB:', e);
+    }
+
+    // 3. Update parent group lastMsg if this was the last message
+    if (CommunityService.inMemoryGroups.has(groupId)) {
+      const grp = CommunityService.inMemoryGroups.get(groupId);
+      const list = CommunityService.inMemoryGroupMessages.get(groupId) || [];
+      if (list.length > 0 && list[list.length - 1].id === messageId) {
+        grp.lastMsg = `${list[list.length - 1].sender}: ${maskedText}`;
+        grp.updatedAt = now;
+      }
+    }
+
+    return {
+      success: true,
+      data: updatedMsg || { id: messageId, text: maskedText, isEdited: true, updatedAt: now },
+      message: 'Message edited successfully',
+    };
+  }
+
   async joinGroup(groupId: string, userId?: string) {
     try {
       const { data: group } = await this.db
@@ -1937,6 +2151,7 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
         CommunityService.inMemoryGroups.set(groupId, {
           ...mem,
           members: newCount,
+          online: CommunityService.calculateOnlineCount(newCount),
         });
       }
 
@@ -1968,7 +2183,7 @@ Analyze the post. Respond ONLY with a JSON object in the following format:
         CommunityService.inMemoryGroups.set(groupId, {
           ...mem,
           members: newCount,
-          online: Math.max(1, Math.min(newCount, mem.online || 1)),
+          online: CommunityService.calculateOnlineCount(newCount),
         });
       }
 
