@@ -712,6 +712,7 @@ export class CommunityController {
     }
 
     @Get('forum/:id')
+    @Get('forum/posts/:id')
     async getForumPostById(@Param('id') id: string, @Request() req) {
         let userId: string | undefined;
         try {
@@ -831,16 +832,22 @@ export class CommunityController {
     }
 
     @Post('forum/:id/comment')
+    @Post('forum/:id/comments')
+    @Post('forum/posts/:id/comments')
+    @Post('forum/posts/:id/comment')
+    @Post('posts/:id/comments')
+    @Post('posts/:id/comment')
     @UseGuards(UserGuard)
     async createForumComment(
         @Request() req,
         @Param('id') id: string,
-        @Body() body: { content: string; parentId?: string },
+        @Body() body: { content?: string; text?: string; parentId?: string },
     ) {
+        const commentContent = body.content || body.text || '';
         return this.communityService.createForumComment(
             req.user.id,
             id,
-            body.content,
+            commentContent,
             body.parentId,
         );
     }
@@ -855,6 +862,8 @@ export class CommunityController {
     }
 
     @Post('forum/:id/like')
+    @Post('forum/posts/:id/like')
+    @Post('posts/:id/like')
     @UseGuards(UserGuard)
     async likeForumPost(
         @Request() req,
@@ -864,6 +873,8 @@ export class CommunityController {
     }
 
     @Post('forum/:id/share')
+    @Post('forum/posts/:id/share')
+    @Post('posts/:id/share')
     @UseGuards(UserGuard)
     async shareForumPost(@Param('id') id: string) {
         return this.communityService.shareForumPost(id);
